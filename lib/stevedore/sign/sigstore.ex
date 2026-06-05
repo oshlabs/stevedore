@@ -15,7 +15,8 @@ defmodule Stevedore.Sign.Sigstore do
   @curve_oid {1, 2, 840, 10045, 3, 1, 7}
 
   @type keypair :: %{private: binary(), public: binary()}
-  @type key :: binary() | keypair() | tuple()
+  @type key ::
+          binary() | tuple() | %{optional(:private) => binary(), optional(:public) => binary()}
 
   @doc """
   Generates an ECDSA P-256 keypair as PEM strings (`%{private: ..., public: ...}`).

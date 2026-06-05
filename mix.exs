@@ -17,7 +17,7 @@ defmodule Stevedore.MixProject do
         "A library-first, daemonless OCI toolkit for Elixir — everything you can do to a container image except run it.",
       docs: docs(),
       dialyzer: [
-        plt_add_apps: [:public_key, :crypto],
+        plt_add_apps: [:public_key, :crypto, :mix],
         plt_local_path: "priv/plts",
         plt_core_path: "priv/plts"
       ]
