@@ -24,7 +24,7 @@ defmodule Stevedore.Sign do
 
   @doc """
   Signs `subject` (an image or a manifest digest) with `key`, returning the cosign signature
-  artifact as an `Stevedore.Image.t/0` ready to copy or attach.
+  artifact as a `t:Stevedore.Image.t/0` ready to copy or attach.
 
   `opts`: `:reference` (docker-reference in the payload), `:annotations` (payload optional
   section). For a bare digest, `:subject_size`/`:subject_media_type` describe the subject.
