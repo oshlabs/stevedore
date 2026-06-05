@@ -15,6 +15,7 @@ defmodule Stevedore.MixProject do
       source_url: @source_url,
       description:
         "A library-first, daemonless OCI toolkit for Elixir — everything you can do to a container image except run it.",
+      package: package(),
       docs: docs(),
       dialyzer: [
         plt_add_apps: [:public_key, :crypto, :mix],
@@ -43,11 +44,19 @@ defmodule Stevedore.MixProject do
     ]
   end
 
+  defp package do
+    [
+      licenses: ["Apache-2.0"],
+      links: %{"GitHub" => @source_url},
+      files: ~w(lib mix.exs README.md LICENSE docs .formatter.exs)
+    ]
+  end
+
   defp docs do
     [
       main: "readme",
-      extras: ["README.md", "docs/EXAMPLES.md", "docs/REFERENCES.md"],
-      groups_for_extras: [Guides: ["docs/EXAMPLES.md", "docs/REFERENCES.md"]]
+      extras: ["README.md", "docs/EXAMPLES.md", "docs/REFERENCES.md", "AGENTS.md", "LICENSE"],
+      groups_for_extras: [Guides: ["docs/EXAMPLES.md", "docs/REFERENCES.md", "AGENTS.md"]]
     ]
   end
 end
