@@ -1,8 +1,5 @@
 defmodule StevedoreTest do
-  use ExUnit.Case
-  doctest Stevedore
+  use ExUnit.Case, async: true
 
-  test "greets the world" do
-    assert Stevedore.hello() == :world
-  end
+  doctest Stevedore
 end
