@@ -49,6 +49,22 @@ defmodule Stevedore.MediaType do
   @spec oci_layer_gzip() :: String.t()
   def oci_layer_gzip, do: @oci_layer_gzip
 
+  @doc "The OCI zstd-compressed layer media type."
+  @spec oci_layer_zstd() :: String.t()
+  def oci_layer_zstd, do: @oci_layer_zstd
+
+  @doc "The Docker schema-2 manifest media type."
+  @spec docker_manifest() :: String.t()
+  def docker_manifest, do: @docker_manifest
+
+  @doc "The Docker image config media type."
+  @spec docker_config() :: String.t()
+  def docker_config, do: @docker_config
+
+  @doc "The Docker gzip-compressed layer media type."
+  @spec docker_layer_gzip() :: String.t()
+  def docker_layer_gzip, do: @docker_layer_gzip
+
   @doc "All manifest+index media types, for use in an `Accept` header."
   @spec all_manifest_types() :: [String.t()]
   def all_manifest_types, do: @manifests ++ @indexes
