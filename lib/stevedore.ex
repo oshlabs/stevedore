@@ -12,14 +12,88 @@ defmodule Stevedore do
   The library is a pure core with optional shells (see the design in `PLAN.md`):
 
     * **Core data types** — `Stevedore.Reference`, `Stevedore.Digest`, `Stevedore.MediaType`,
-      and `Stevedore.Archive` (tar/gzip). Pure functions over data, no processes, no heavy deps.
-    * **The `Stevedore.Store` seam** — content-addressed blob I/O for on-disk transports, with
-      `Stevedore.Store.Local` and `Stevedore.Store.Memory` implementations.
+      `Stevedore.Descriptor`, `Stevedore.Manifest`, `Stevedore.Config`, and `Stevedore.Archive`.
+    * **The `docker://` client** — `Stevedore.Registry` (requires the optional `:req` dep) plus
+      `Stevedore.Auth` for the bearer-token flow.
+    * **The `Stevedore.Store` seam** — content-addressed blob I/O, with `Store.Local` and
+      `Store.Memory`.
 
-  Higher-level verbs (`inspect/2`, `copy/3`, …) and transports arrive in later phases. See
-  `docs/EXAMPLES.md` for a tour of the target API and `docs/REFERENCES.md` for the specs
-  implemented.
+  The functions below are the high-level verbs. See `docs/EXAMPLES.md` for a fuller tour.
 
   Nothing here starts a process; adding `:stevedore` as a dependency is weightless.
   """
+
+  # Stevedore.inspect/2 intentionally shadows the rarely-needed Kernel.inspect/2.
+  import Kernel, except: [inspect: 2]
+
+  alias Stevedore.{Config, Digest, Manifest, Reference, Registry}
+
+  @doc """
+  Fetches and parses the manifest for `ref` from its registry.
+
+  Options:
+
+    * `:raw` — return the raw manifest bytes instead of a `t:Stevedore.Manifest.t/0`.
+    * `:config` — fetch and parse the image config, returning a `t:Stevedore.Config.t/0`
+      (selecting the host platform, or `:platform`, when `ref` is a multi-arch index).
+    * `:platform` — a keyword (`os`/`architecture`/`variant`) used with `:config` on an index.
+    * plus any `Stevedore.Registry` option (`:creds`, `:scheme`, …).
+  """
+  @spec inspect(Reference.t(), keyword()) ::
+          {:ok, Manifest.t() | binary() | Config.t()} | {:error, term()}
+  def inspect(%Reference{} = ref, opts \\ []) do
+    with {:ok, fetched} <- Registry.manifest(ref, opts) do
+      cond do
+        opts[:raw] -> {:ok, fetched.raw}
+        opts[:config] -> fetch_config(ref, fetched, opts)
+        true -> Manifest.parse(fetched.raw, fetched.media_type)
+      end
+    end
+  end
+
+  @doc "Lists the tags in `ref`'s repository."
+  @spec list_tags(Reference.t(), keyword()) :: {:ok, [String.t()]} | {:error, term()}
+  def list_tags(%Reference{} = ref, opts \\ []), do: Registry.list_tags(ref, opts)
+
+  @doc """
+  Computes the digest of a manifest from its raw bytes (or a `t:Stevedore.Manifest.t/0`).
+
+  ## Examples
+
+      iex> digest = Stevedore.manifest_digest(~s({"schemaVersion":2}))
+      iex> digest.algorithm
+      :sha256
+  """
+  @spec manifest_digest(binary() | Manifest.t()) :: Digest.t()
+  def manifest_digest(%Manifest{raw: raw}), do: Digest.compute(raw)
+  def manifest_digest(raw) when is_binary(raw), do: Digest.compute(raw)
+
+  # Resolve `ref` to a single image manifest (selecting a platform from an index), fetch its
+  # config descriptor's blob, and parse it.
+  @spec fetch_config(Reference.t(), map(), keyword()) :: {:ok, Config.t()} | {:error, term()}
+  defp fetch_config(ref, fetched, opts) do
+    with {:ok, manifest} <- Manifest.parse(fetched.raw, fetched.media_type),
+         {:ok, manifest, image_ref} <- resolve_image(ref, manifest, opts),
+         {:ok, descriptor} <- Manifest.config(manifest),
+         {:ok, bytes} <- Registry.blob(image_ref, descriptor.digest, opts) do
+      Config.parse(bytes)
+    end
+  end
+
+  @spec resolve_image(Reference.t(), Manifest.t(), keyword()) ::
+          {:ok, Manifest.t(), Reference.t()} | {:error, term()}
+  defp resolve_image(ref, manifest, opts) do
+    case Manifest.kind(manifest) do
+      :manifest ->
+        {:ok, manifest, ref}
+
+      :index ->
+        with {:ok, descriptor} <- Manifest.select(manifest, opts[:platform] || []),
+             image_ref = %{ref | tag: nil, digest: descriptor.digest},
+             {:ok, fetched} <- Registry.manifest(image_ref, opts),
+             {:ok, image_manifest} <- Manifest.parse(fetched.raw, fetched.media_type) do
+          {:ok, image_manifest, image_ref}
+        end
+    end
+  end
 end
