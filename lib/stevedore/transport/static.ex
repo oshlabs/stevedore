@@ -100,6 +100,12 @@ defmodule Stevedore.Transport.Static do
     :ok
   end
 
+  @doc "Lists every stored manifest reference (tags and digests), excluding sidecar files."
+  @spec list_manifest_refs(t()) :: [String.t()]
+  def list_manifest_refs(%__MODULE__{} = t) do
+    t |> manifests_dir() |> ls() |> Enum.reject(&String.ends_with?(&1, ".mediatype"))
+  end
+
   @spec write_manifest(t(), String.t(), binary(), String.t()) :: :ok
   defp write_manifest(t, target, raw, media_type) do
     File.write!(manifest_path(t, target), raw)

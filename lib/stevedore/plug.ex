@@ -97,7 +97,8 @@ if Code.ensure_loaded?(Plug) do
     defp route("GET", :catalog, conn, opts),
       do: with_auth(conn, :pull, "", opts, fn -> catalog(conn, opts) end)
 
-    defp route("GET", {:referrers, _name, _digest}, conn, _opts), do: referrers(conn)
+    defp route("GET", {:referrers, name, digest}, conn, opts),
+      do: with_auth(conn, :pull, name, opts, fn -> referrers(conn, opts, name, digest) end)
 
     defp route(_method, _parsed, conn, _opts),
       do: error(conn, 404, "UNSUPPORTED", "unsupported request")
@@ -281,9 +282,15 @@ if Code.ensure_loaded?(Plug) do
       |> json(200, %{"repositories" => page})
     end
 
-    defp referrers(conn) do
-      empty = %{"schemaVersion" => 2, "mediaType" => MediaType.oci_index(), "manifests" => []}
-      conn |> put_resp_content_type(MediaType.oci_index()) |> json(200, empty)
+    defp referrers(conn, opts, name, digest_str) do
+      case parse_digest(digest_str) do
+        {:ok, digest} ->
+          index = Stevedore.Referrers.index_for(static(opts, name), digest)
+          conn |> put_resp_content_type(MediaType.oci_index(), nil) |> send_resp(200, index.raw)
+
+        :error ->
+          error(conn, 400, "DIGEST_INVALID", "invalid digest")
+      end
     end
 
     # --- auth ---

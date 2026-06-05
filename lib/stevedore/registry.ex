@@ -146,6 +146,43 @@ defmodule Stevedore.Registry do
     with {:ok, _} <- authed(ref, :delete, url, [], nil, opts), do: :ok
   end
 
+  @doc """
+  Lists referrers to `digest` via the OCI 1.1 Referrers API, falling back to the tag-schema
+  (`<algo>-<hex>`) referrers index for registries without the API. Returns the referrers index as
+  raw bytes + decoded JSON.
+  """
+  @spec referrers(Reference.t(), Digest.t(), keyword()) ::
+          {:ok, %{raw: binary(), json: map()}} | {:error, Error.t()}
+  def referrers(%Reference{} = ref, %Digest{} = digest, opts \\ []) do
+    ensure_req!()
+    url = url(ref, "referrers", Digest.to_string(digest), opts)
+
+    case authed(ref, :get, url, [{"accept", MediaType.oci_index()}], nil, opts) do
+      {:ok, resp} -> decode_index(resp.body, ref)
+      {:error, _} -> referrers_fallback(ref, digest, opts)
+    end
+  end
+
+  # Tag-schema fallback: an index stored at the "<algo>-<hex>" tag.
+  @spec referrers_fallback(Reference.t(), Digest.t(), keyword()) ::
+          {:ok, %{raw: binary(), json: map()}} | {:error, Error.t()}
+  defp referrers_fallback(ref, digest, opts) do
+    tag = "#{digest.algorithm}-#{digest.hex}"
+    url = url(ref, "manifests", tag, opts)
+
+    case authed(ref, :get, url, [{"accept", MediaType.oci_index()}], nil, opts) do
+      {:ok, resp} -> decode_index(resp.body, ref)
+      # No API and no fallback tag: an empty referrers set, not an error.
+      {:error, _} -> {:ok, %{raw: "", json: %{"manifests" => []}}}
+    end
+  end
+
+  @spec decode_index(binary(), Reference.t()) ::
+          {:ok, %{raw: binary(), json: map()}} | {:error, Error.t()}
+  defp decode_index(raw, ref) do
+    with {:ok, json} <- decode_json(raw, ref, :invalid_index), do: {:ok, %{raw: raw, json: json}}
+  end
+
   # --- Auth + request flow ---
 
   @spec list_tags_page(Reference.t(), String.t(), [String.t()], keyword()) ::

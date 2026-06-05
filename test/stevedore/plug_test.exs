@@ -191,11 +191,76 @@ defmodule Stevedore.PlugTest do
     assert errors_code(conn) == "MANIFEST_UNKNOWN"
   end
 
-  test "referrers endpoint returns an empty index", %{opts: opts} do
+  test "referrers endpoint returns an empty index when there are none", %{opts: opts} do
     digest = Digest.compute("x")
     conn = call(conn(:get, "/v2/lib/app/referrers/#{to_string(digest)}"), opts)
     assert conn.status == 200
     assert JSON.decode!(conn.resp_body)["manifests"] == []
+  end
+
+  test "referrers endpoint builds an index from stored subject fields", %{opts: opts} do
+    img = build_image(opts, "lib/app")
+
+    put =
+      call(
+        put_req_header(
+          conn(:put, "/v2/lib/app/manifests/v1", img.raw),
+          "content-type",
+          MediaType.oci_manifest()
+        ),
+        opts
+      )
+
+    assert put.status == 201
+
+    # An artifact manifest referring to the image via `subject`.
+    payload = ~s({"spdx":1})
+    pd = Digest.compute(payload)
+    _ = put_blob(opts, "lib/app", payload)
+    config = ~s({})
+    cd = put_blob(opts, "lib/app", config)
+
+    artifact =
+      JSON.encode!(%{
+        "schemaVersion" => 2,
+        "mediaType" => MediaType.oci_manifest(),
+        "artifactType" => "application/spdx+json",
+        "config" => %{
+          "mediaType" => MediaType.oci_config(),
+          "size" => byte_size(config),
+          "digest" => to_string(cd)
+        },
+        "layers" => [
+          %{
+            "mediaType" => "application/spdx+json",
+            "size" => byte_size(payload),
+            "digest" => to_string(pd)
+          }
+        ],
+        "subject" => %{
+          "mediaType" => MediaType.oci_manifest(),
+          "size" => byte_size(img.raw),
+          "digest" => to_string(img.digest)
+        }
+      })
+
+    art_put =
+      call(
+        put_req_header(
+          conn(:put, "/v2/lib/app/manifests/#{to_string(Digest.compute(artifact))}", artifact),
+          "content-type",
+          MediaType.oci_manifest()
+        ),
+        opts
+      )
+
+    assert art_put.status == 201
+
+    conn = call(conn(:get, "/v2/lib/app/referrers/#{to_string(img.digest)}"), opts)
+    assert conn.status == 200
+    manifests = JSON.decode!(conn.resp_body)["manifests"]
+    assert [%{"digest" => digest, "artifactType" => "application/spdx+json"}] = manifests
+    assert digest == to_string(Digest.compute(artifact))
   end
 
   describe "authorization (default read-only)" do

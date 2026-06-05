@@ -2,8 +2,9 @@ defmodule Stevedore.ServerTest do
   # Boots a real Bandit listener; not async (binds a port, uses the default Uploads name).
   use ExUnit.Case, async: false
 
-  alias Stevedore.{Digest, MediaType}
-  alias Stevedore.Transport.OCILayout
+  alias Stevedore.{Digest, MediaType, Referrers, Sign, Verify}
+  alias Stevedore.Sign.Sigstore
+  alias Stevedore.Transport.{OCILayout, Registry}
 
   @moduletag :tmp_dir
 
@@ -86,5 +87,40 @@ defmodule Stevedore.ServerTest do
 
     {:ok, ref} = Stevedore.Reference.parse("localhost:#{port}/lib/app")
     assert {:ok, ["v1"]} = Stevedore.list_tags(ref, scheme: "http")
+  end
+
+  test "sign, attach as a referrer, then verify via the server", %{tmp_dir: dir} do
+    port = free_port()
+
+    start_supervised!(
+      {Stevedore.Server,
+       store: Path.join(dir, "registry"), port: port, authorize: fn _, _, _ -> :ok end}
+    )
+
+    src = %OCILayout{path: Path.join(dir, "src")}
+    img = build_image(src, "v1")
+
+    transport = %Registry{
+      registry: "localhost:#{port}",
+      repository: "lib/app",
+      opts: [scheme: "http"]
+    }
+
+    {:ok, _} =
+      Stevedore.copy({src, "v1"}, "docker://localhost:#{port}/lib/app:v1", scheme: "http")
+
+    key = Sigstore.generate_key()
+    {:ok, signature} = Sign.sigstore(img.digest, key, subject_size: byte_size(img.raw))
+    assert {:ok, _} = Referrers.attach(transport, img.digest, signature)
+
+    # The server's Referrers API now reports the signature artifact.
+    assert {:ok, index} = Referrers.list(transport, img.digest)
+    {:ok, referrers} = Stevedore.Manifest.manifests(index)
+    assert referrers != []
+
+    # And verification, fetching signatures over the transport, accepts the policy key.
+    assert {:ok, [_ | _]} = Verify.image(img.digest, %{keys: [key.public]}, transport: transport)
+    other = Sigstore.generate_key()
+    assert {:error, _} = Verify.image(img.digest, %{keys: [other.public]}, transport: transport)
   end
 end
