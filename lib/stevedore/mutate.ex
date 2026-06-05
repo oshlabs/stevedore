@@ -9,7 +9,7 @@ defmodule Stevedore.Mutate do
   `config.md`/`layer.md`.
   """
 
-  alias Stevedore.{Archive, Config, Image, MediaType}
+  alias Stevedore.{Archive, Config, Image, Layer}
 
   @doc """
   Rewrites the runtime config. `changes` is a map of `:entrypoint`/`:cmd`/`:env`/`:user`/
@@ -65,7 +65,7 @@ defmodule Stevedore.Mutate do
   """
   @spec flatten(Image.t(), keyword()) :: {:ok, Image.t()} | {:error, term()}
   def flatten(%Image{} = image, opts \\ []) do
-    with {:ok, entries} <- merged_entries(Image.layers(image)) do
+    with {:ok, entries} <- Layer.merged_entries(image) do
       tar = Archive.write!(entries)
 
       Stevedore.Build.image([tar], image.config,
@@ -111,74 +111,6 @@ defmodule Stevedore.Mutate do
 
   defp merge_labels(runtime, labels),
     do: Map.put(runtime, "Labels", Map.merge(runtime["Labels"] || %{}, labels))
-
-  # --- flatten merge ---
-
-  @spec merged_entries([Image.layer()]) :: {:ok, [Archive.entry()]} | {:error, term()}
-  defp merged_entries(layers) do
-    Enum.reduce_while(layers, {:ok, %{}}, fn layer, {:ok, files} ->
-      with {:ok, tar} <- decompress(layer),
-           {:ok, entries} <- Archive.read(tar) do
-        {:cont, {:ok, apply_entries(files, entries)}}
-      else
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, files} -> {:ok, files |> Map.values() |> Enum.sort_by(& &1.name)}
-      error -> error
-    end
-  end
-
-  @spec apply_entries(map(), [Archive.entry()]) :: map()
-  defp apply_entries(files, entries) do
-    Enum.reduce(entries, files, fn entry, files ->
-      base = Path.basename(entry.name)
-      dir = Path.dirname(entry.name)
-
-      cond do
-        base == ".wh..wh..opq" ->
-          drop_prefix(files, prefix(dir))
-
-        String.starts_with?(base, ".wh.") ->
-          drop_path(files, join(dir, String.replace_prefix(base, ".wh.", "")))
-
-        true ->
-          Map.put(files, entry.name, entry)
-      end
-    end)
-  end
-
-  defp drop_prefix(files, ""), do: files |> Map.keys() |> Enum.reduce(files, &Map.delete(&2, &1))
-
-  defp drop_prefix(files, prefix) do
-    files
-    |> Map.keys()
-    |> Enum.filter(&String.starts_with?(&1, prefix))
-    |> Enum.reduce(files, &Map.delete(&2, &1))
-  end
-
-  defp drop_path(files, target) do
-    files
-    |> Map.keys()
-    |> Enum.filter(&(&1 == target or String.starts_with?(&1, target <> "/")))
-    |> Enum.reduce(files, &Map.delete(&2, &1))
-  end
-
-  defp prefix(dir) when dir in [".", ""], do: ""
-  defp prefix(dir), do: dir <> "/"
-
-  defp join(dir, name) when dir in [".", ""], do: name
-  defp join(dir, name), do: dir <> "/" <> name
-
-  @spec decompress(Image.layer()) :: {:ok, binary()} | {:error, term()}
-  defp decompress(%{descriptor: desc, blob: blob}) do
-    cond do
-      MediaType.gzip?(desc.media_type) -> Archive.gunzip(blob)
-      MediaType.zstd?(desc.media_type) -> Archive.unzstd(blob)
-      true -> {:ok, blob}
-    end
-  end
 
   # --- helpers ---
 
