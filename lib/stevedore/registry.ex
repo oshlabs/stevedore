@@ -93,7 +93,7 @@ defmodule Stevedore.Registry do
     start = url(ref, "blobs/uploads/", nil, opts)
 
     with {:ok, resp} <- authed(ref, :post, start, [], "", opts),
-         {:ok, location} <- upload_location(resp, ref),
+         {:ok, location} <- upload_location(resp, ref, opts),
          put_url = append_query(location, "digest", Digest.to_string(digest)),
          {:ok, _} <-
            authed(ref, :put, put_url, [{"content-type", "application/octet-stream"}], data, opts) do
@@ -276,12 +276,12 @@ defmodule Stevedore.Registry do
   defp put_body(req_opts, nil), do: req_opts
   defp put_body(req_opts, body), do: Keyword.put(req_opts, :body, body)
 
-  @spec upload_location(Req.Response.t(), Reference.t()) ::
+  @spec upload_location(Req.Response.t(), Reference.t(), keyword()) ::
           {:ok, String.t()} | {:error, Error.t()}
-  defp upload_location(resp, ref) do
+  defp upload_location(resp, ref, opts) do
     case header(resp, "location") do
       nil -> {:error, error(ref, reason: :missing_upload_location)}
-      location -> {:ok, absolutize(location, ref)}
+      location -> {:ok, absolutize(location, ref, opts)}
     end
   end
 
@@ -337,9 +337,9 @@ defmodule Stevedore.Registry do
     if reference, do: base <> "/" <> reference, else: base
   end
 
-  @spec absolutize(String.t(), Reference.t()) :: String.t()
-  defp absolutize("http" <> _ = url, _ref), do: url
-  defp absolutize(path, ref), do: "https://#{ref.registry}" <> path
+  @spec absolutize(String.t(), Reference.t(), keyword()) :: String.t()
+  defp absolutize("http" <> _ = url, _ref, _opts), do: url
+  defp absolutize(path, ref, opts), do: "#{scheme(opts)}://#{ref.registry}" <> path
 
   @spec append_query(String.t(), String.t(), String.t()) :: String.t()
   defp append_query(url, key, value) do

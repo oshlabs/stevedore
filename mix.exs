@@ -36,6 +36,8 @@ defmodule Stevedore.MixProject do
     [
       # Optional: only loaded when you use a mode that needs it (see PLAN §5).
       {:req, "~> 0.5", optional: true},
+      {:plug, "~> 1.16", optional: true},
+      {:bandit, "~> 1.5", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
     ]

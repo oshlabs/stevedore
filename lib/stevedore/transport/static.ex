@@ -93,6 +93,13 @@ defmodule Stevedore.Transport.Static do
     :ok
   end
 
+  @doc "Deletes a blob by digest (idempotent)."
+  @spec delete_blob(t(), Digest.t()) :: :ok
+  def delete_blob(%__MODULE__{} = t, %Digest{} = digest) do
+    _ = File.rm(blob_path(t, digest))
+    :ok
+  end
+
   @spec write_manifest(t(), String.t(), binary(), String.t()) :: :ok
   defp write_manifest(t, target, raw, media_type) do
     File.write!(manifest_path(t, target), raw)

@@ -57,6 +57,16 @@ defmodule Stevedore do
   def list_tags(%Reference{} = ref, opts \\ []), do: Registry.list_tags(ref, opts)
 
   @doc """
+  Starts the standalone `/v2` registry server (`Stevedore.Server`).
+
+  The only thing in Stevedore that boots a process tree, and only when called. Requires the
+  optional `:bandit`/`:plug` deps. See `Stevedore.Server` for options (`:store`, `:port`,
+  `:authorize`, …).
+  """
+  @spec start_link(keyword()) :: Supervisor.on_start()
+  def start_link(opts \\ []), do: Stevedore.Server.start_link(opts)
+
+  @doc """
   Copies an image from `source` to `dest`, preserving digests. Returns `{:ok, %{digest: ...}}`.
 
   Endpoints are transport-prefixed strings (`docker://`, `oci:`, `dir:`, `docker-archive:`,
