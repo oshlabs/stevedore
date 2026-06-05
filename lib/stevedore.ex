@@ -26,7 +26,8 @@ defmodule Stevedore do
   # Stevedore.inspect/2 intentionally shadows the rarely-needed Kernel.inspect/2.
   import Kernel, except: [inspect: 2]
 
-  alias Stevedore.{Config, Digest, Manifest, Reference, Registry}
+  alias Stevedore.{Config, Copy, Digest, Manifest, Reference, Registry, Transport}
+  alias Stevedore.Transport.Parse
 
   @doc """
   Fetches and parses the manifest for `ref` from its registry.
@@ -56,6 +57,50 @@ defmodule Stevedore do
   def list_tags(%Reference{} = ref, opts \\ []), do: Registry.list_tags(ref, opts)
 
   @doc """
+  Copies an image from `source` to `dest`, preserving digests. Returns `{:ok, %{digest: ...}}`.
+
+  Endpoints are transport-prefixed strings (`docker://`, `oci:`, `dir:`, `docker-archive:`,
+  `oci-archive:`, `static:`) or `{transport, ref}` tuples. Options: `:all` (copy a whole index),
+  `:platform`/`:platforms` (select from an index), plus transport options like `:creds`.
+
+  ## Examples
+
+      Stevedore.copy("docker://alpine:3.20", "oci:./alpine:3.20")
+      Stevedore.copy("docker://alpine:3.20", "docker://ghcr.io/me/alpine:3.20", all: true)
+  """
+  @spec copy(Copy.endpoint(), Copy.endpoint(), keyword()) ::
+          {:ok, %{digest: Digest.t()}} | {:error, term()}
+  def copy(source, dest, opts \\ []), do: Copy.run(source, dest, opts)
+
+  @doc """
+  Copies many images from a declarative list of jobs. Each job is `{source, dest}` or a map with
+  `:source`/`:dest` (and optional per-job `:opts`). Returns a result per job.
+  """
+  @spec sync([{Copy.endpoint(), Copy.endpoint()} | map()], keyword()) :: {:ok, [{term(), term()}]}
+  def sync(jobs, opts \\ []) when is_list(jobs) do
+    results =
+      Enum.map(jobs, fn job ->
+        {source, dest, job_opts} = normalize_job(job)
+        {job, copy(source, dest, Keyword.merge(opts, job_opts))}
+      end)
+
+    {:ok, results}
+  end
+
+  @doc """
+  Deletes the manifest named by `endpoint` (a transport-prefixed string or `{transport, ref}`).
+  """
+  @spec delete(Copy.endpoint(), keyword()) :: :ok | {:error, term()}
+  def delete(endpoint, opts \\ [])
+
+  def delete(string, opts) when is_binary(string) do
+    with {:ok, {transport, ref}} <- Parse.parse(string, opts),
+         do: Transport.delete(transport, ref)
+  end
+
+  def delete({%_{} = transport, ref}, _opts), do: Transport.delete(transport, ref)
+
+  @doc """
   Computes the digest of a manifest from its raw bytes (or a `t:Stevedore.Manifest.t/0`).
 
   ## Examples
@@ -67,6 +112,13 @@ defmodule Stevedore do
   @spec manifest_digest(binary() | Manifest.t()) :: Digest.t()
   def manifest_digest(%Manifest{raw: raw}), do: Digest.compute(raw)
   def manifest_digest(raw) when is_binary(raw), do: Digest.compute(raw)
+
+  @spec normalize_job({Copy.endpoint(), Copy.endpoint()} | map()) ::
+          {Copy.endpoint(), Copy.endpoint(), keyword()}
+  defp normalize_job({source, dest}), do: {source, dest, []}
+
+  defp normalize_job(%{source: source, dest: dest} = job),
+    do: {source, dest, Map.get(job, :opts, [])}
 
   # Resolve `ref` to a single image manifest (selecting a platform from an index), fetch its
   # config descriptor's blob, and parse it.

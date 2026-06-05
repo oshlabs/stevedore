@@ -55,7 +55,7 @@ defmodule Stevedore.Archive do
   """
   @spec write!([entry()]) :: binary()
   def write!(entries) when is_list(entries) do
-    body = Enum.map_join(entries, "", &encode_entry/1)
+    body = Enum.map(entries, &encode_entry/1)
     # Two zero blocks terminate the archive.
     IO.iodata_to_binary([body, @zero_block, @zero_block])
   end
@@ -95,6 +95,45 @@ defmodule Stevedore.Archive do
     {:ok, :zlib.gunzip(data)}
   rescue
     _ -> {:error, :gzip}
+  end
+
+  @doc """
+  Whether zstd support is available — i.e. the optional `:ezstd` NIF is loaded. gzip is always
+  available natively; zstd requires adding `{:ezstd, "~> 1.1"}` to your deps.
+  """
+  @spec zstd_available?() :: boolean()
+  def zstd_available?, do: Code.ensure_loaded?(:ezstd)
+
+  @doc """
+  Zstd-compresses `data`. Raises a clear error if the optional `:ezstd` NIF isn't available.
+  """
+  @spec zstd(iodata()) :: binary()
+  def zstd(data) do
+    ensure_zstd!()
+    apply(:ezstd, :compress, [IO.iodata_to_binary(data)])
+  end
+
+  @doc """
+  Decompresses zstd `data`. Raises a clear error if the optional `:ezstd` NIF isn't available.
+  """
+  @spec unzstd(binary()) :: {:ok, binary()} | {:error, :zstd}
+  def unzstd(data) when is_binary(data) do
+    ensure_zstd!()
+
+    case apply(:ezstd, :decompress, [data]) do
+      decompressed when is_binary(decompressed) -> {:ok, decompressed}
+      _ -> {:error, :zstd}
+    end
+  end
+
+  @spec ensure_zstd!() :: :ok
+  defp ensure_zstd! do
+    unless zstd_available?() do
+      raise RuntimeError,
+            "zstd support requires the optional :ezstd dependency. Add {:ezstd, \"~> 1.1\"} to your deps."
+    end
+
+    :ok
   end
 
   # --- Reading ---

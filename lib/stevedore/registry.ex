@@ -2,19 +2,22 @@ defmodule Stevedore.Registry do
   @moduledoc """
   A daemonless client for the OCI/Docker Distribution v2 API (the `docker://` transport).
 
-  Fetches manifests and blobs from a registry over HTTPS: it performs the anonymous
-  bearer-token handshake (a `401` challenge exchanged at the token endpoint), negotiates manifest
-  media types via `Accept`, honors `Docker-Content-Digest`, and verifies every blob against its
-  digest. Manifest bytes are returned **raw** so their digest stays stable.
+  Fetches and pushes manifests and blobs: it performs the bearer-token handshake (a `401`
+  challenge exchanged at the token endpoint, requesting `pull`/`push` scope as the server asks),
+  negotiates manifest media types via `Accept`, honors `Docker-Content-Digest`, and verifies
+  every blob against its digest. Manifest bytes move **raw** so their digest stays stable.
 
   This module requires the optional `:req` dependency; calling it without `req` raises a clear
   error. The functions return the shapes a runtime (e.g. Tank) consumes directly.
 
-  Spec: [OCI distribution-spec, pull](https://github.com/opencontainers/distribution-spec/blob/main/spec.md#pull).
+  Spec: [OCI distribution-spec](https://github.com/opencontainers/distribution-spec/blob/main/spec.md)
+  (pull, push, blob uploads, cross-repo mount).
   """
 
   alias Stevedore.{Auth, Digest, MediaType, Reference}
   alias Stevedore.Registry.Error
+
+  # --- Pull ---
 
   @doc """
   Fetches a manifest (or index) for `ref`, by its tag or digest.
@@ -34,8 +37,8 @@ defmodule Stevedore.Registry do
     url = url(ref, "manifests", reference_part(ref), opts)
     headers = [{"accept", Enum.join(MediaType.all_manifest_types(), ", ")}]
 
-    with {:ok, resp} <- authed_get(ref, url, headers, opts),
-         {:ok, json} <- decode_manifest(resp.body, ref),
+    with {:ok, resp} <- authed(ref, :get, url, headers, nil, opts),
+         {:ok, json} <- decode_json(resp.body, ref, :invalid_manifest_json),
          {:ok, digest} <- resolve_digest(resp, resp.body, ref) do
       media_type = header(resp, "content-type") || json["mediaType"] || MediaType.oci_manifest()
       {:ok, %{media_type: media_type, digest: digest, raw: resp.body, json: json}}
@@ -53,7 +56,7 @@ defmodule Stevedore.Registry do
     ensure_req!()
     url = url(ref, "blobs", Digest.to_string(digest), opts)
 
-    with {:ok, resp} <- authed_get(ref, url, [], opts) do
+    with {:ok, resp} <- authed(ref, :get, url, [], nil, opts) do
       case Digest.verify(resp.body, digest) do
         :ok -> {:ok, resp.body}
         {:error, :digest_mismatch} -> {:error, error(ref, reason: :digest_mismatch)}
@@ -61,20 +64,95 @@ defmodule Stevedore.Registry do
     end
   end
 
-  @doc """
-  Lists all tags for `ref`'s repository, following `Link` pagination.
-  """
+  @doc "Lists all tags for `ref`'s repository, following `Link` pagination."
   @spec list_tags(Reference.t(), keyword()) :: {:ok, [String.t()]} | {:error, Error.t()}
   def list_tags(%Reference{} = ref, opts \\ []) do
     ensure_req!()
     list_tags_page(ref, url(ref, "tags/list", nil, opts), [], opts)
   end
 
+  # --- Push ---
+
+  @doc """
+  Whether the registry already has the blob for `digest` (a `HEAD` on the blob).
+  """
+  @spec has_blob?(Reference.t(), Digest.t(), keyword()) :: boolean()
+  def has_blob?(%Reference{} = ref, %Digest{} = digest, opts \\ []) do
+    ensure_req!()
+    url = url(ref, "blobs", Digest.to_string(digest), opts)
+    match?({:ok, _}, authed(ref, :head, url, [], nil, opts))
+  end
+
+  @doc """
+  Uploads a blob via a monolithic upload session (`POST` an upload, then `PUT` the bytes with
+  `?digest=`).
+  """
+  @spec put_blob(Reference.t(), Digest.t(), iodata(), keyword()) :: :ok | {:error, Error.t()}
+  def put_blob(%Reference{} = ref, %Digest{} = digest, data, opts \\ []) do
+    ensure_req!()
+    start = url(ref, "blobs/uploads/", nil, opts)
+
+    with {:ok, resp} <- authed(ref, :post, start, [], "", opts),
+         {:ok, location} <- upload_location(resp, ref),
+         put_url = append_query(location, "digest", Digest.to_string(digest)),
+         {:ok, _} <-
+           authed(ref, :put, put_url, [{"content-type", "application/octet-stream"}], data, opts) do
+      :ok
+    end
+  end
+
+  @doc """
+  Attempts a cross-repo blob mount (`POST ?mount=&from=`). Returns `:not_mounted` (rather than an
+  error) when the registry declines, so the caller can fall back to a normal upload.
+  """
+  @spec mount_blob(Reference.t(), Digest.t(), String.t(), keyword()) :: :ok | :not_mounted
+  def mount_blob(%Reference{} = ref, %Digest{} = digest, from_repo, opts \\ []) do
+    ensure_req!()
+    start = url(ref, "blobs/uploads/", nil, opts)
+    params = [mount: Digest.to_string(digest), from: from_repo]
+
+    case authed(ref, :post, start, [], "", opts, params: params) do
+      # 201 Created = mounted; a 202 starts a fresh upload session, i.e. the mount was declined.
+      {:ok, %{status: 201}} -> :ok
+      _ -> :not_mounted
+    end
+  end
+
+  @doc """
+  Pushes raw manifest bytes, tagged or by digest (`ref` is a tag, a `t:Stevedore.Digest.t/0`, or
+  `nil` to use the computed digest). Returns the manifest digest.
+  """
+  @spec put_manifest(Reference.t(), binary(), String.t(), keyword()) ::
+          {:ok, Digest.t()} | {:error, Error.t()}
+  def put_manifest(%Reference{} = ref, raw, media_type, opts \\ []) do
+    ensure_req!()
+    target = reference_part(ref)
+    url = url(ref, "manifests", target, opts)
+
+    with {:ok, resp} <- authed(ref, :put, url, [{"content-type", media_type}], raw, opts) do
+      case header(resp, "docker-content-digest") do
+        nil -> {:ok, Digest.compute(raw)}
+        header -> parse_header_digest(header, ref)
+      end
+    end
+  end
+
+  @doc "Deletes a manifest by tag or digest."
+  @spec delete_manifest(Reference.t(), String.t(), keyword()) :: :ok | {:error, Error.t()}
+  def delete_manifest(%Reference{} = ref, target, opts \\ []) do
+    ensure_req!()
+    url = url(ref, "manifests", target, opts)
+
+    with {:ok, _} <- authed(ref, :delete, url, [], nil, opts), do: :ok
+  end
+
+  # --- Auth + request flow ---
+
   @spec list_tags_page(Reference.t(), String.t(), [String.t()], keyword()) ::
           {:ok, [String.t()]} | {:error, Error.t()}
   defp list_tags_page(ref, url, acc, opts) do
-    with {:ok, resp} <- authed_get(ref, url, [{"accept", "application/json"}], opts),
-         {:ok, json} <- decode_json(resp.body, ref) do
+    with {:ok, resp} <- authed(ref, :get, url, [{"accept", "application/json"}], nil, opts),
+         {:ok, json} <- decode_json(resp.body, ref, :invalid_json) do
       acc = acc ++ (json["tags"] || [])
 
       case next_link(resp, ref, opts) do
@@ -84,16 +162,24 @@ defmodule Stevedore.Registry do
     end
   end
 
-  # Perform a GET, handling a 401 bearer/basic challenge with a single authenticated retry.
-  @spec authed_get(Reference.t(), String.t(), [{String.t(), String.t()}], keyword()) ::
+  # Issue a request, handling a 401 bearer/basic challenge with a single authenticated retry.
+  @spec authed(
+          Reference.t(),
+          atom(),
+          String.t(),
+          [{String.t(), String.t()}],
+          iodata() | nil,
+          keyword(),
+          keyword()
+        ) ::
           {:ok, Req.Response.t()} | {:error, Error.t()}
-  defp authed_get(ref, url, headers, opts) do
-    case request(url, headers, opts, []) do
+  defp authed(ref, method, url, headers, body, opts, extra \\ []) do
+    case request(method, url, headers, body, opts, extra) do
       {:ok, %{status: status} = resp} when status in 200..299 ->
         {:ok, resp}
 
       {:ok, %{status: 401} = resp} ->
-        retry_with_auth(ref, url, headers, opts, resp)
+        retry_with_auth(ref, method, url, headers, body, opts, extra, resp)
 
       {:ok, resp} ->
         {:error, error(ref, status: resp.status, reason: :request_failed, body: resp.body)}
@@ -105,26 +191,36 @@ defmodule Stevedore.Registry do
 
   @spec retry_with_auth(
           Reference.t(),
+          atom(),
           String.t(),
           [{String.t(), String.t()}],
+          iodata() | nil,
+          keyword(),
           keyword(),
           Req.Response.t()
         ) ::
           {:ok, Req.Response.t()} | {:error, Error.t()}
-  defp retry_with_auth(ref, url, headers, opts, resp) do
+  defp retry_with_auth(ref, method, url, headers, body, opts, extra, resp) do
     creds = Keyword.get(opts, :creds, :anonymous)
 
     case Auth.parse_challenge(header(resp, "www-authenticate") || "") do
       {:ok, challenge} ->
         with {:ok, token} <- token(ref, challenge, creds, opts) do
-          finish(ref, request(url, headers, opts, auth: {:bearer, token}))
+          finish(
+            ref,
+            request(method, url, headers, body, opts, [{:auth, {:bearer, token}} | extra])
+          )
         end
 
-      # A Basic-scheme challenge: retry directly with the supplied credentials.
       {:error, :unsupported} ->
         case creds do
           {:basic, user, pass} ->
-            finish(ref, request(url, headers, opts, auth: {:basic, "#{user}:#{pass}"}))
+            finish(
+              ref,
+              request(method, url, headers, body, opts, [
+                {:auth, {:basic, "#{user}:#{pass}"}} | extra
+              ])
+            )
 
           :anonymous ->
             {:error, error(ref, status: 401, reason: :unauthorized)}
@@ -150,11 +246,19 @@ defmodule Stevedore.Registry do
     end
   end
 
-  @spec request(String.t(), [{String.t(), String.t()}], keyword(), keyword()) ::
+  @spec request(
+          atom(),
+          String.t(),
+          [{String.t(), String.t()}],
+          iodata() | nil,
+          keyword(),
+          keyword()
+        ) ::
           {:ok, Req.Response.t()} | {:error, Exception.t()}
-  defp request(url, headers, opts, extra) do
+  defp request(method, url, headers, body, opts, extra) do
     # raw + compressed:false → the body is the exact stored bytes the digest is computed over.
     [
+      method: method,
       url: url,
       headers: headers,
       raw: true,
@@ -162,24 +266,30 @@ defmodule Stevedore.Registry do
       retry: :transient,
       max_retries: Keyword.get(opts, :max_retries, 3)
     ]
+    |> put_body(body)
     |> Keyword.merge(extra)
     |> Keyword.merge(Keyword.get(opts, :req_options, []))
     |> Req.request()
   end
 
-  @spec decode_manifest(binary(), Reference.t()) :: {:ok, map()} | {:error, Error.t()}
-  defp decode_manifest(raw, ref) do
-    case JSON.decode(raw) do
-      {:ok, json} when is_map(json) -> {:ok, json}
-      _ -> {:error, error(ref, reason: :invalid_manifest_json)}
+  @spec put_body(keyword(), iodata() | nil) :: keyword()
+  defp put_body(req_opts, nil), do: req_opts
+  defp put_body(req_opts, body), do: Keyword.put(req_opts, :body, body)
+
+  @spec upload_location(Req.Response.t(), Reference.t()) ::
+          {:ok, String.t()} | {:error, Error.t()}
+  defp upload_location(resp, ref) do
+    case header(resp, "location") do
+      nil -> {:error, error(ref, reason: :missing_upload_location)}
+      location -> {:ok, absolutize(location, ref)}
     end
   end
 
-  @spec decode_json(binary(), Reference.t()) :: {:ok, map()} | {:error, Error.t()}
-  defp decode_json(raw, ref) do
+  @spec decode_json(binary(), Reference.t(), atom()) :: {:ok, map()} | {:error, Error.t()}
+  defp decode_json(raw, ref, reason) do
     case JSON.decode(raw) do
       {:ok, json} when is_map(json) -> {:ok, json}
-      _ -> {:error, error(ref, reason: :invalid_json)}
+      _ -> {:error, error(ref, reason: reason)}
     end
   end
 
@@ -213,9 +323,9 @@ defmodule Stevedore.Registry do
   defp next_link(resp, ref, opts) do
     with link when is_binary(link) <- header(resp, "link"),
          [_, path] <- Regex.run(~r/<([^>]+)>\s*;\s*rel="?next"?/, link) do
-      # The Link target is registry-relative; resolve against the base.
-      base = "#{scheme(opts)}://#{ref.registry}"
-      if String.starts_with?(path, "http"), do: path, else: base <> path
+      if String.starts_with?(path, "http"),
+        do: path,
+        else: "#{scheme(opts)}://#{ref.registry}" <> path
     else
       _ -> nil
     end
@@ -225,6 +335,16 @@ defmodule Stevedore.Registry do
   defp url(ref, kind, reference, opts) do
     base = "#{scheme(opts)}://#{ref.registry}/v2/#{ref.repository}/#{kind}"
     if reference, do: base <> "/" <> reference, else: base
+  end
+
+  @spec absolutize(String.t(), Reference.t()) :: String.t()
+  defp absolutize("http" <> _ = url, _ref), do: url
+  defp absolutize(path, ref), do: "https://#{ref.registry}" <> path
+
+  @spec append_query(String.t(), String.t(), String.t()) :: String.t()
+  defp append_query(url, key, value) do
+    sep = if String.contains?(url, "?"), do: "&", else: "?"
+    url <> sep <> URI.encode_query([{key, value}])
   end
 
   @spec reference_part(Reference.t()) :: String.t()

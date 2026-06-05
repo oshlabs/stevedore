@@ -41,6 +41,10 @@ defmodule Stevedore.MediaType do
   @spec oci_config() :: String.t()
   def oci_config, do: @oci_config
 
+  @doc "The OCI uncompressed layer media type (a plain tar)."
+  @spec oci_layer() :: String.t()
+  def oci_layer, do: @oci_layer
+
   @doc "The OCI gzip-compressed layer media type."
   @spec oci_layer_gzip() :: String.t()
   def oci_layer_gzip, do: @oci_layer_gzip
