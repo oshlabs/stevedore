@@ -1,0 +1,22 @@
+# Test-time registries for the `:external` suite (STEP-9D). NOT a runtime dependency — Stevedore
+# itself never shells out to a daemon; these containers are oracles the client tests push to and
+# pull from. Two implementations on purpose: they diverge on cross-repo mount, the referrers API,
+# and error envelopes, so registry-specific client bugs surface.
+#
+#   docker compose -f docker-compose.test.yml up -d
+#   mix test --include external
+#   docker compose -f docker-compose.test.yml down
+services:
+  # CNCF distribution — the reference implementation. Deletion must be enabled explicitly.
+  registry:
+    image: registry:2
+    ports: ["5000:5000"]
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+
+  # zot — a strict, OCI-native registry with a native Referrers API. Deletion enabled via config.
+  zot:
+    image: ghcr.io/project-zot/zot-linux-amd64:latest
+    ports: ["5001:5000"]
+    volumes:
+      - ./test/support/zot-config.json:/etc/zot/config.json:ro

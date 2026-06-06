@@ -42,6 +42,48 @@ defmodule Stevedore.TestTools do
   @spec missing([String.t()]) :: [String.t()]
   def missing(tools), do: Enum.reject(tools, &available?/1)
 
+  @doc """
+  Whether a registry is listening at `url` (an `http(s)://host:port` base).
+
+  A fast TCP connect to the host/port — enough to decide skip-vs-run for the `:external` suite
+  without a Distribution probe. Defaults point at localhost (instant `ECONNREFUSED` when the
+  `docker-compose.test.yml` registries are down), so this stays cheap and offline.
+  """
+  @spec registry_up?(String.t()) :: boolean()
+  def registry_up?(url) do
+    uri = URI.parse(url)
+
+    case :gen_tcp.connect(String.to_charlist(uri.host), uri.port, [active: false], 500) do
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        true
+
+      {:error, _} ->
+        false
+    end
+  end
+
+  @doc """
+  Defines a test that needs a reachable registry at `url`.
+
+  Like `tool_test/3`, but the skip condition is registry reachability rather than an installed
+  binary — so a machine with no `docker-compose.test.yml` stack up gets a clean, skipped run.
+  """
+  defmacro registry_test(name, url, do: body) do
+    quote do
+      if Stevedore.TestTools.registry_up?(unquote(url)) do
+        test unquote(name) do
+          unquote(body)
+        end
+      else
+        @tag skip: "registry not reachable: #{unquote(url)}"
+        test unquote(name) do
+          unquote(body)
+        end
+      end
+    end
+  end
+
   @spec go_bin(String.t()) :: String.t() | nil
   defp go_bin(tool) do
     path = Path.join(@go_bin, tool)
