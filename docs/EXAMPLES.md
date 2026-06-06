@@ -37,13 +37,23 @@ client by hand. *(Needs `:req`.)*
 {:ok, ref} = Stevedore.Reference.parse("alpine:3.20")
 
 # One-liners — fetch and decode for you (anonymous bearer auth + digest verification handled):
-{:ok, manifest} = Stevedore.inspect(ref)                 #=> {:ok, %Stevedore.Manifest{}}
-{:ok, raw}      = Stevedore.inspect(ref, raw: true)      #=> raw manifest bytes
-{:ok, config}   = Stevedore.inspect(ref, config: true)   #=> {:ok, %Stevedore.Config{}} (host platform)
-{:ok, config}   = Stevedore.inspect(ref, config: true, platform: [os: "linux", architecture: "arm64"])
+{:ok, manifest} = Stevedore.inspect(ref)
+#=> {:ok, #Stevedore.Manifest<index, 8 manifests, sha256:7264a8db6415…>}
+#   (a %Stevedore.Manifest{} struct — raw bytes + decoded json kept inside)
+
+{:ok, raw} = Stevedore.inspect(ref, raw: true)           #=> raw manifest bytes
+
+{:ok, config} = Stevedore.inspect(ref, config: true)
+#=> {:ok, #Stevedore.Config<linux/amd64, 1 layer>}
+#   (a %Stevedore.Config{} struct; host platform)
+
+{:ok, config} = Stevedore.inspect(ref, config: true, platform: [os: "linux", architecture: "arm64"])
 
 {:ok, tags} = Stevedore.list_tags(ref)                   #=> {:ok, ["3.20", "latest", ...]} (paginated)
-Stevedore.manifest_digest(raw)                           #=> %Stevedore.Digest{} (digest of any manifest bytes)
+
+Stevedore.manifest_digest(raw)
+#=> #Stevedore.Digest<sha256:7264a8db6415…>
+#   (a %Stevedore.Digest{} — digest of any manifest bytes)
 ```
 
 **Need the raw client?** Drop to `Stevedore.Registry` when you want the exact bytes a runtime
@@ -163,8 +173,12 @@ tar, in `rootfs.diff_ids`) vs the **layer descriptor digest** (sha256 of the *co
 the manifest):
 
 ```elixir
-image.layers                  #=> [%Stevedore.Descriptor{}]  (compressed digests)
-image.config.rootfs_diff_ids  #=> [%Stevedore.Digest{}]      (uncompressed digests — different!)
+image.layers
+#=> [#Stevedore.Descriptor<application/vnd.oci.image.layer.v1.tar+gzip sha256:9fb3aa2f8b80… 3401613B>, …]
+#   (each a %Stevedore.Descriptor{}; the *compressed* layer digests)
+image.config.rootfs_diff_ids
+#=> [#Stevedore.Digest<sha256:8d3ac3489996…>, …]
+#   (each a %Stevedore.Digest{}; the *uncompressed* digests — different!)
 ```
 
 ---
@@ -537,7 +551,7 @@ layers — distinct from the manifest's compressed layer digests).
 {:ok, config} = Stevedore.Config.parse(config_blob_bytes)
 config.entrypoint        #=> ["/bin/app"] | nil
 config.os                #=> "linux"
-config.rootfs_diff_ids   #=> [%Stevedore.Digest{}, ...]
+config.rootfs_diff_ids   #=> [#Stevedore.Digest<sha256:8d3ac3489996…>, ...]  (each a %Stevedore.Digest{})
 ```
 
 ### `Stevedore.Archive` — tar & compression

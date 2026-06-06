@@ -198,4 +198,24 @@ defmodule Stevedore.Manifest do
       other -> other
     end
   end
+
+  defimpl Inspect do
+    def inspect(%Stevedore.Manifest{} = m, _opts) do
+      digest = if m.digest, do: ", #{Stevedore.Digest.short(m.digest)}", else: ""
+      "#Stevedore.Manifest<#{summary(m)}#{digest}>"
+    end
+
+    defp summary(%Stevedore.Manifest{json: json} = m) do
+      case Stevedore.Manifest.kind(m) do
+        :manifest -> "manifest, #{plural(count(json["layers"]), "layer")}"
+        :index -> "index, #{plural(count(json["manifests"]), "manifest")}"
+      end
+    end
+
+    defp count(list) when is_list(list), do: length(list)
+    defp count(_), do: 0
+
+    defp plural(1, noun), do: "1 #{noun}"
+    defp plural(n, noun), do: "#{n} #{noun}s"
+  end
 end

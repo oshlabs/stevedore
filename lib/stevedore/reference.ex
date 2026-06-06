@@ -142,4 +142,14 @@ defmodule Stevedore.Reference do
   @spec default_tag(String.t() | nil, Digest.t() | nil) :: String.t() | nil
   defp default_tag(nil, nil), do: @default_tag
   defp default_tag(tag, _digest), do: tag
+
+  defimpl Inspect do
+    # Like `to_string/1`, but with the (long) digest abbreviated for readability.
+    def inspect(%Stevedore.Reference{} = ref, _opts) do
+      base = "#{ref.registry}/#{ref.repository}"
+      base = if ref.tag, do: "#{base}:#{ref.tag}", else: base
+      base = if ref.digest, do: "#{base}@#{Stevedore.Digest.short(ref.digest)}", else: base
+      "#Stevedore.Reference<#{base}>"
+    end
+  end
 end

@@ -112,4 +112,12 @@ defmodule Stevedore.Descriptor do
   @spec put_optional(map(), String.t(), term()) :: map()
   defp put_optional(map, _key, value) when value in [nil, %{}, []], do: map
   defp put_optional(map, key, value), do: Map.put(map, key, value)
+
+  defimpl Inspect do
+    def inspect(%Stevedore.Descriptor{} = d, _opts) do
+      platform = if d.platform, do: " #{d.platform.os}/#{d.platform.architecture}", else: ""
+
+      "#Stevedore.Descriptor<#{d.media_type} #{Stevedore.Digest.short(d.digest)} #{d.size}B#{platform}>"
+    end
+  end
 end

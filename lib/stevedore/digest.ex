@@ -78,6 +78,25 @@ defmodule Stevedore.Digest do
   end
 
   @doc """
+  Renders a short, display-only form — the algorithm with the hex truncated to 12 characters.
+
+  For logs and `Inspect`, not as an identifier: it is **not** collision-free. Use `to_string/1`
+  when you need the full, stable digest.
+
+  ## Examples
+
+      iex> Stevedore.Digest.short(Stevedore.Digest.compute(""))
+      "sha256:e3b0c44298fc…"
+  """
+  @spec short(t()) :: String.t()
+  def short(%__MODULE__{algorithm: algorithm, hex: hex}) do
+    case hex do
+      <<head::binary-size(12), _::binary>> -> "#{algorithm}:#{head}…"
+      _ -> "#{algorithm}:#{hex}"
+    end
+  end
+
+  @doc """
   Verifies that `data` hashes to `digest`.
 
   ## Examples
@@ -117,5 +136,9 @@ defmodule Stevedore.Digest do
 
   defimpl String.Chars do
     def to_string(digest), do: Stevedore.Digest.to_string(digest)
+  end
+
+  defimpl Inspect do
+    def inspect(digest, _opts), do: "#Stevedore.Digest<#{Stevedore.Digest.short(digest)}>"
   end
 end

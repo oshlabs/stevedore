@@ -97,4 +97,18 @@ defmodule Stevedore.Config do
       error -> error
     end
   end
+
+  defimpl Inspect do
+    def inspect(%Stevedore.Config{} = c, _opts) do
+      "#Stevedore.Config<#{platform(c)}#{plural(length(c.rootfs_diff_ids), "layer")}>"
+    end
+
+    defp platform(%Stevedore.Config{os: nil, architecture: nil}), do: ""
+
+    defp platform(%Stevedore.Config{os: os, architecture: arch}),
+      do: "#{os || "?"}/#{arch || "?"}, "
+
+    defp plural(1, noun), do: "1 #{noun}"
+    defp plural(n, noun), do: "#{n} #{noun}s"
+  end
 end

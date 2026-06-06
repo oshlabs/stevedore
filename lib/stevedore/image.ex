@@ -145,4 +145,15 @@ defmodule Stevedore.Image do
   @spec manifest_media(:oci | :docker) :: String.t()
   defp manifest_media(:docker), do: MediaType.docker_manifest()
   defp manifest_media(_), do: MediaType.oci_manifest()
+
+  defimpl Inspect do
+    def inspect(%Stevedore.Image{manifest: manifest, layers: layers} = img, _opts) do
+      tag = if img.tag, do: "#{img.tag}, ", else: ""
+      digest = if manifest.digest, do: ", #{Stevedore.Digest.short(manifest.digest)}", else: ""
+      "#Stevedore.Image<#{tag}#{plural(length(layers), "layer")}#{digest}>"
+    end
+
+    defp plural(1, noun), do: "1 #{noun}"
+    defp plural(n, noun), do: "#{n} #{noun}s"
+  end
 end
