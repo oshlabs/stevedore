@@ -16,6 +16,9 @@ env:
   CRANE_VERSION: "v0.21.6"
   ORAS_VERSION: "v1.3.2"
   REGCTL_VERSION: "v0.11.5"
+  # Pinned: the sign-interop test reverts cosign 3.x's changed signing defaults via flags
+  # (e.g. --new-bundle-format) that newer 3.x releases have since removed. Match the planned 3.0.6.
+  COSIGN_VERSION: "v3.0.6"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -231,6 +234,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
 
       - name: Install oracle tools (skopeo, crane, oras, regctl)
         run: |

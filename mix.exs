@@ -50,7 +50,7 @@ defmodule Stevedore.MixProject do
       {:plug, "~> 1.16", optional: true},
       {:bandit, "~> 1.5", optional: true},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       # Test-only: validate emitted JSON against the vendored OCI image-spec schemas (Step 9B).
       # Kept out of the runtime to preserve the "weightless by default" invariant (AGENTS.md).
       {:ex_json_schema, "~> 0.10", only: :test}
