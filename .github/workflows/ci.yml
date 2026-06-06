@@ -16,6 +16,9 @@ env:
   CRANE_VERSION: "v0.21.6"
   ORAS_VERSION: "v1.3.2"
   REGCTL_VERSION: "v0.11.5"
+  # skopeo has no version-pinnable apt package, and newer skopeo rejects Docker media types in an
+  # `oci:` layout (a strictness the round-trip test must read past). Pin the official image instead.
+  SKOPEO_VERSION: "v1.22.2"
   # The sign-interop test drives cosign 3.x flags (--new-bundle-format, --use-signing-config,
   # --registry-referrers-mode). Pin the planned 3.0.6 — the installer's default cosign is a 2.x
   # that predates those flags. Needs cosign-installer >= v4 to fetch/verify 3.x releases.
@@ -240,7 +243,16 @@ jobs:
 
       - name: Install oracle tools (skopeo, crane, oras, regctl)
         run: |
-          sudo apt-get update && sudo apt-get install -y skopeo
+          # skopeo: a wrapper on PATH that runs the pinned official image against the host's /tmp
+          # and network, so the interop tests invoke `skopeo` transparently at a fixed version.
+          docker pull "quay.io/skopeo/stable:${SKOPEO_VERSION}"
+          mkdir -p "$HOME/bin"
+          {
+            echo '#!/usr/bin/env bash'
+            echo "exec docker run --rm --network host --user \"\$(id -u):\$(id -g)\" -v /tmp:/tmp quay.io/skopeo/stable:${SKOPEO_VERSION} \"\$@\""
+          } > "$HOME/bin/skopeo"
+          chmod +x "$HOME/bin/skopeo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
           go install github.com/google/go-containerregistry/cmd/crane@${CRANE_VERSION}
           go install oras.land/oras/cmd/oras@${ORAS_VERSION}
           go install github.com/regclient/regclient/cmd/regctl@${REGCTL_VERSION}
