@@ -8,8 +8,21 @@ on:
 permissions:
   contents: read
 
+# Pinned tool versions — keep in sync with tmp/STEP-9-PLAN.md so CI and local runs match.
+env:
+  ELIXIR_VERSION: "1.19.5"
+  OTP_VERSION: "28.5.0.1"
+  GO_VERSION: "1.26"
+  CRANE_VERSION: "v0.21.6"
+  ORAS_VERSION: "v1.3.2"
+  REGCTL_VERSION: "v0.11.5"
+
 jobs:
-  test:
+  # ---------------------------------------------------------------------------
+  # fast — the hermetic, offline PR gate. Format, warnings-as-errors, the
+  # default `mix test` (9A/9B fold in here), and dialyzer. Required check.
+  # ---------------------------------------------------------------------------
+  fast:
     runs-on: ubuntu-latest
     env:
       MIX_ENV: test
@@ -52,3 +65,169 @@ jobs:
           restore-keys: ${{ runner.os }}-plt-${{ matrix.otp }}-${{ matrix.elixir }}-
 
       - run: mix dialyzer --format github
+
+  # ---------------------------------------------------------------------------
+  # external — the client (`Stevedore.Registry`/`copy`) against two real
+  # registries that diverge on edge cases. STEP-9D, tag `:external`.
+  #
+  # Uses docker compose (not service containers) so zot's config file
+  # (test/support/zot-config.json) is mounted from the checkout — service
+  # containers start before checkout and can't see repo files.
+  # ---------------------------------------------------------------------------
+  external:
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache deps and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+
+      - name: Start registry:2 + zot
+        run: docker compose -f docker-compose.test.yml up -d
+
+      # Block until both registries answer /v2/ so tests RUN (not skip). The
+      # registry_test/3 macro skips on an unreachable registry — in CI we want
+      # the cases exercised, so fail the job if they never come up.
+      - name: Wait for registries
+        run: |
+          for url in http://localhost:5000/v2/ http://localhost:5001/v2/; do
+            echo "waiting for $url"
+            for i in $(seq 1 30); do
+              if curl -sf -o /dev/null "$url"; then echo "  up"; break; fi
+              if [ "$i" -eq 30 ]; then echo "  $url never came up"; exit 1; fi
+              sleep 1
+            done
+          done
+
+      - run: mix deps.get
+
+      - run: mix test --include external --only external
+
+      - name: Stop registries
+        if: always()
+        run: docker compose -f docker-compose.test.yml down
+
+  # ---------------------------------------------------------------------------
+  # conformance — the official OCI distribution-spec Go/Ginkgo suite against a
+  # live Stevedore.Server. STEP-9C, tag `:conformance`. Needs a Go toolchain
+  # (the support module clones the pinned spec tag and `go test -c`s it).
+  # ---------------------------------------------------------------------------
+  conformance:
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache deps and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+
+      # The built conformance.test binary lives under _build/conformance and is
+      # keyed on the pinned spec tag (v1.1.0), so it survives across runs.
+      - name: Cache conformance binary
+        uses: actions/cache@v4
+        with:
+          path: _build/conformance
+          key: ${{ runner.os }}-conformance-v1.1.0
+
+      - run: mix deps.get
+
+      - run: mix test --include conformance --only conformance
+
+      - name: Upload conformance report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: conformance-report
+          path: "**/junit.xml"
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # interop — produce with one tool, consume with another (STEP-9E–9H,
+  # tag `:interop`). Installs the oracle binaries pinned to STEP-9-PLAN and
+  # brings up the local registries for the push-based cases.
+  # ---------------------------------------------------------------------------
+  interop:
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Install oracle tools (skopeo, crane, oras, regctl)
+        run: |
+          sudo apt-get update && sudo apt-get install -y skopeo
+          go install github.com/google/go-containerregistry/cmd/crane@${CRANE_VERSION}
+          go install oras.land/oras/cmd/oras@${ORAS_VERSION}
+          go install github.com/regclient/regclient/cmd/regctl@${REGCTL_VERSION}
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      - name: Cache deps and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+
+      - name: Start registry:2 + zot (push-based interop)
+        run: docker compose -f docker-compose.test.yml up -d
+
+      - name: Wait for registries
+        run: |
+          for url in http://localhost:5000/v2/ http://localhost:5001/v2/; do
+            echo "waiting for $url"
+            for i in $(seq 1 30); do
+              if curl -sf -o /dev/null "$url"; then echo "  up"; break; fi
+              if [ "$i" -eq 30 ]; then echo "  $url never came up"; exit 1; fi
+              sleep 1
+            done
+          done
+
+      - run: mix deps.get
+
+      - run: mix test --include interop --only interop
+
+      - name: Stop registries
+        if: always()
+        run: docker compose -f docker-compose.test.yml down
