@@ -215,8 +215,8 @@ defmodule Stevedore.RegistryInteropTest do
           #   3. It's only half a story without a referrer-*delete* verb (which Stevedore lacks) to
           #      rewrite the index on removal.
           # Net: real cost and a built-in race for a shrinking legacy audience. Deferred until a
-          # user actually needs a no-API registry. Full reasoning in tmp/STEP-9D-REGISTRY-CLIENT.md
-          # and the step-9-findings memory.
+          # user actually needs a no-API registry. Documented as a known limitation in
+          # docs/TESTING.md.
           #
           # This `refute` is a TRIPWIRE, not an endorsement of the current behaviour: if the write
           # side is ever implemented, the referrer will start appearing here and this assertion will

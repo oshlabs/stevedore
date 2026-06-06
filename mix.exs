@@ -68,8 +68,17 @@ defmodule Stevedore.MixProject do
   defp docs do
     [
       main: "readme",
-      extras: ["README.md", "docs/EXAMPLES.md", "docs/REFERENCES.md", "AGENTS.md", "LICENSE"],
-      groups_for_extras: [Guides: ["docs/EXAMPLES.md", "docs/REFERENCES.md", "AGENTS.md"]]
+      extras: [
+        "README.md",
+        "docs/EXAMPLES.md",
+        "docs/REFERENCES.md",
+        "docs/TESTING.md",
+        "AGENTS.md",
+        "LICENSE"
+      ],
+      groups_for_extras: [
+        Guides: ["docs/EXAMPLES.md", "docs/REFERENCES.md", "docs/TESTING.md", "AGENTS.md"]
+      ]
     ]
   end
 end

@@ -9,7 +9,7 @@ defmodule Stevedore.TestTools do
 
   Two of the tools (`oras`, `regctl`) are typically `go install`ed into `~/go/bin`, which may not
   be on `PATH`. `find/1` falls back to `~/go/bin` so the suite works either way. See
-  `tmp/STEP-9-PLAN.md`.
+  `docs/TESTING.md`.
 
   ## Usage
 

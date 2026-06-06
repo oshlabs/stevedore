@@ -70,7 +70,9 @@ link a stable URL). Primary references:
   - `docs/EXAMPLES.md` — end-to-end, lifecycle-organized usage of the whole verb surface.
     Examples are phase-tagged; keep them truthful as phases land.
   - `docs/REFERENCES.md` — the specs implemented, with sections mapped to modules.
-  Both are surfaced in the ExDoc build. `tmp/` (the plan + step docs) is git-ignored scaffolding.
+  - `docs/TESTING.md` — the test strategy: tag taxonomy, asymmetric interop, oracles, how to run
+    each slice. Read it before adding integration/interop tests.
+  All three are surfaced in the ExDoc build. `tmp/` (the plan + step docs) is git-ignored scaffolding.
 
 ## Elixir guidelines
 

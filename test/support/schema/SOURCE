@@ -17,5 +17,14 @@ Files copied verbatim (do not edit — re-fetch from the pinned commit to bump):
 
 These are draft-04 schemas that $ref each other by bare filename. The resolver in
 test/support/schema_validator.ex maps each cross-file $ref back to the matching
-file here by basename. Bump procedure: re-run the curl in tmp/STEP-9B-SCHEMA.md
-against a new tag, update the Tag/Commit/Retrieved lines above.
+file here by basename.
+
+Bump procedure: re-fetch the seven files verbatim from a new pinned tag, then update
+the Tag/Commit/Retrieved lines above. From this directory:
+
+  TAG=v1.1.1   # the image-spec tag to pin
+  base="https://raw.githubusercontent.com/opencontainers/image-spec/$TAG/schema"
+  for f in config-schema content-descriptor defs-descriptor defs \
+           image-index-schema image-layout-schema image-manifest-schema; do
+    curl -fsSL "$base/$f.json" -o "$f.json"
+  done

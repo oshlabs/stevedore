@@ -85,5 +85,5 @@ The registry HTTP API. Sections Stevedore implements:
 - **gzip** (RFC 1952) via Erlang `:zlib`; **zstd** (RFC 8878) via an optional NIF.
   → `Stevedore.Archive`, `Stevedore.Layer`.
 
-> See `tmp/PLAN.md §11` for the same list in the design document, and each `tmp/STEP-n-*.md`
-> for the per-phase section citations.
+> Each module cites the specific spec section it implements in a `@doc`/comment (the convention in
+> [AGENTS.md](AGENTS.md) — "Spec fidelity"). This page is the index; the modules carry the detail.
