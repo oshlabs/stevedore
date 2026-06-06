@@ -9,7 +9,7 @@ defmodule Stevedore do
 
   ## Layers
 
-  The library is a pure core with optional shells (see the design in `PLAN.md`):
+  The library is a pure core with optional shells:
 
     * **Core data types** — `Stevedore.Reference`, `Stevedore.Digest`, `Stevedore.MediaType`,
       `Stevedore.Descriptor`, `Stevedore.Manifest`, `Stevedore.Config`, and `Stevedore.Archive`.
