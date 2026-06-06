@@ -68,6 +68,7 @@ defmodule Stevedore.MixProject do
   defp docs do
     [
       main: "readme",
+      source_ref: "v#{@version}",
       extras: [
         "README.md",
         "docs/EXAMPLES.md",
@@ -78,6 +79,72 @@ defmodule Stevedore.MixProject do
       ],
       groups_for_extras: [
         Guides: ["docs/EXAMPLES.md", "docs/REFERENCES.md", "docs/TESTING.md", "AGENTS.md"]
+      ],
+      groups_for_modules: [
+        "Top-level API": [Stevedore],
+        "Core types": [
+          Stevedore.Reference,
+          Stevedore.Digest,
+          Stevedore.MediaType,
+          Stevedore.Descriptor,
+          Stevedore.Manifest,
+          Stevedore.Config,
+          Stevedore.Image,
+          Stevedore.Layer
+        ],
+        "Build, copy & modify": [
+          Stevedore.Build,
+          Stevedore.Copy,
+          Stevedore.Mutate
+        ],
+        Analyze: [Stevedore.Analyze],
+        "Sign & verify": [
+          Stevedore.Sign,
+          Stevedore.Verify,
+          Stevedore.Referrers,
+          Stevedore.Sign.Sigstore
+        ],
+        "Registry client": [Stevedore.Registry, Stevedore.Auth],
+        Transports: [
+          Stevedore.Transport,
+          Stevedore.Transport.Registry,
+          Stevedore.Transport.OCILayout,
+          Stevedore.Transport.Archive,
+          Stevedore.Transport.Dir,
+          Stevedore.Transport.Static,
+          Stevedore.Transport.Memory,
+          Stevedore.Transport.Parse
+        ],
+        "Storage & archives": [
+          Stevedore.Store,
+          Stevedore.Store.Local,
+          Stevedore.Store.Memory,
+          Stevedore.Archive
+        ],
+        "Server & deploy": [
+          Stevedore.Server,
+          Stevedore.Server.Uploads,
+          Stevedore.Plug,
+          Stevedore.Deploy
+        ],
+        CLI: [
+          Stevedore.CLI,
+          Mix.Tasks.Stevedore.Copy,
+          Mix.Tasks.Stevedore.Delete,
+          Mix.Tasks.Stevedore.Deploy,
+          Mix.Tasks.Stevedore.Inspect,
+          Mix.Tasks.Stevedore.ListTags,
+          Mix.Tasks.Stevedore.Sign,
+          Mix.Tasks.Stevedore.Sync,
+          Mix.Tasks.Stevedore.Verify
+        ],
+        Errors: [
+          Stevedore.Archive.Error,
+          Stevedore.Auth.Error,
+          Stevedore.Registry.Error,
+          Stevedore.Sign.Error,
+          Stevedore.Verify.Error
+        ]
       ]
     ]
   end
