@@ -148,7 +148,8 @@ defmodule Stevedore.Referrers do
             media_type: fetched.media_type,
             digest: fetched.digest,
             size: byte_size(fetched.raw),
-            artifact_type: fetched.json["artifactType"]
+            artifact_type: fetched.json["artifactType"],
+            annotations: fetched.json["annotations"]
           }
         ]
       else

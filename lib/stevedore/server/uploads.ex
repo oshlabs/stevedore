@@ -32,10 +32,19 @@ defmodule Stevedore.Server.Uploads do
   @spec create(GenServer.server()) :: {:ok, uuid()}
   def create(server), do: GenServer.call(server, :create)
 
-  @doc "Appends `chunk` to a session, returning the new total size."
-  @spec append(GenServer.server(), uuid(), iodata()) ::
-          {:ok, non_neg_integer()} | {:error, :unknown_session}
-  def append(server, uuid, chunk), do: GenServer.call(server, {:append, uuid, chunk})
+  @doc """
+  Appends `chunk` to a session, returning the new total size.
+
+  `at` is the offset the chunk claims to start at (from a `Content-Range` header). When given, it
+  must equal the session's current size or the append is rejected with `{:error, :bad_range}` and
+  the session is left untouched — the distribution-spec requires chunks to arrive in order
+  (out-of-order or retried chunks yield `416`). Pass `nil` to append unconditionally (streamed
+  uploads with no range).
+  """
+  @spec append(GenServer.server(), uuid(), iodata(), non_neg_integer() | nil) ::
+          {:ok, non_neg_integer()} | {:error, :unknown_session | :bad_range}
+  def append(server, uuid, chunk, at \\ nil),
+    do: GenServer.call(server, {:append, uuid, chunk, at})
 
   @doc "Current accumulated size of a session."
   @spec size(GenServer.server(), uuid()) :: {:ok, non_neg_integer()} | {:error, :unknown_session}
@@ -68,11 +77,15 @@ defmodule Stevedore.Server.Uploads do
     {:reply, {:ok, uuid}, put_in(state.sessions[uuid], session)}
   end
 
-  def handle_call({:append, uuid, chunk}, _from, state) do
+  def handle_call({:append, uuid, chunk, at}, _from, state) do
     with_session(state, uuid, fn session ->
-      size = session.size + IO.iodata_length(chunk)
-      session = %{session | chunks: [chunk | session.chunks], size: size, touched_at: now()}
-      {{:ok, size}, put_in(state.sessions[uuid], session)}
+      if at != nil and at != session.size do
+        {{:error, :bad_range}, state}
+      else
+        size = session.size + IO.iodata_length(chunk)
+        session = %{session | chunks: [chunk | session.chunks], size: size, touched_at: now()}
+        {{:ok, size}, put_in(state.sessions[uuid], session)}
+      end
     end)
   end
 

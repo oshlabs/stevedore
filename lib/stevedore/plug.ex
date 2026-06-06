@@ -143,7 +143,22 @@ if Code.ensure_loaded?(Plug) do
           conn
           |> put_resp_header("docker-content-digest", to_string(digest))
           |> put_resp_header("location", "/v2/#{name}/manifests/#{to_string(digest)}")
+          |> maybe_subject_header(body)
           |> send_resp(201, "")
+      end
+    end
+
+    # A manifest carrying a `subject` establishes a referrers relationship; the registry echoes the
+    # subject digest in `OCI-Subject` so the client knows referrers were recorded. distribution-spec,
+    # "Pushing Manifests with Subject".
+    @spec maybe_subject_header(Plug.Conn.t(), binary()) :: Plug.Conn.t()
+    defp maybe_subject_header(conn, body) do
+      case JSON.decode(body) do
+        {:ok, %{"subject" => %{"digest" => digest}}} when is_binary(digest) ->
+          put_resp_header(conn, "oci-subject", digest)
+
+        _ ->
+          conn
       end
     end
 
@@ -229,9 +244,28 @@ if Code.ensure_loaded?(Plug) do
     defp upload_chunk(conn, opts, name, uuid) do
       {:ok, body, conn} = read_all(conn)
 
-      case Uploads.append(opts.uploads, uuid, body) do
-        {:ok, size} -> conn |> upload_headers(name, uuid, size) |> send_resp(202, "")
-        {:error, :unknown_session} -> error(conn, 404, "BLOB_UPLOAD_UNKNOWN", "upload unknown")
+      # A `Content-Range` chunk must begin exactly where the session left off; an out-of-order or
+      # retried chunk gets 416. distribution-spec, "Pushing a blob in chunks".
+      case Uploads.append(opts.uploads, uuid, body, chunk_offset(conn)) do
+        {:ok, size} ->
+          conn |> upload_headers(name, uuid, size) |> send_resp(202, "")
+
+        {:error, :bad_range} ->
+          error(conn, 416, "BLOB_UPLOAD_INVALID", "chunk is not contiguous with the upload")
+
+        {:error, :unknown_session} ->
+          error(conn, 404, "BLOB_UPLOAD_UNKNOWN", "upload unknown")
+      end
+    end
+
+    # The start offset a `Content-Range: <start>-<end>` chunk claims, or nil when absent.
+    @spec chunk_offset(Plug.Conn.t()) :: non_neg_integer() | nil
+    defp chunk_offset(conn) do
+      with range when is_binary(range) <- req_header(conn, "content-range"),
+           {start, _rest} <- Integer.parse(range) do
+        start
+      else
+        _ -> nil
       end
     end
 
