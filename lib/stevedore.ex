@@ -18,7 +18,8 @@ defmodule Stevedore do
     * **The `Stevedore.Store` seam** — content-addressed blob I/O, with `Store.Local` and
       `Store.Memory`.
 
-  The functions below are the high-level verbs. See `docs/EXAMPLES.md` for a fuller tour.
+  The functions below are the high-level verbs. See `docs/EXAMPLES.md` for a cookbook of
+  task-oriented recipes.
 
   Nothing here starts a process; adding `:stevedore` as a dependency is weightless.
   """
