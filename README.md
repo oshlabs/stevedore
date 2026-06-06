@@ -1,5 +1,7 @@
 # Stevedore
 
+[![CI](https://github.com/oshlabs/stevedore/actions/workflows/ci.yml/badge.svg)](https://github.com/oshlabs/stevedore/actions/workflows/ci.yml)
+
 **A library-first, daemonless OCI toolkit for Elixir — everything you can do to a container image
 *except run it*.**
 
