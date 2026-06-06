@@ -121,6 +121,8 @@ jobs:
   # containers start before checkout and can't see repo files.
   # ---------------------------------------------------------------------------
   external:
+    # Heavy integration tier — only on main pushes, not PRs (PRs gate on fast + compat).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       MIX_ENV: test
@@ -172,6 +174,8 @@ jobs:
   # (the support module clones the pinned spec tag and `go test -c`s it).
   # ---------------------------------------------------------------------------
   conformance:
+    # Heavy integration tier — only on main pushes, not PRs (PRs gate on fast + compat).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       MIX_ENV: test
@@ -222,6 +226,8 @@ jobs:
   # brings up the local registries for the push-based cases.
   # ---------------------------------------------------------------------------
   interop:
+    # Heavy integration tier — only on main pushes, not PRs (PRs gate on fast + compat).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
       MIX_ENV: test
