@@ -98,7 +98,7 @@ The base build is dependency-free. Opt into modes as needed:
 {:ezstd, "~> 1.1"}              # zstd-compressed layers
 ```
 
-Target Elixir is `~> 1.19` (uses the built-in `JSON` module — no `jason`).
+Target Elixir is `~> 1.18` (uses the built-in `JSON` module — no `jason`).
 
 ## Documentation
 

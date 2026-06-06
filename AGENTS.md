@@ -27,7 +27,7 @@ server.
   transports, serving, and CLI sit behind behaviours — the two seams are **`Stevedore.Store`**
   (blob/file I/O) and **`Stevedore.Transport`** (where images live). `copy` is the primitive
   everything composes from: transport → transport.
-- **Elixir `~> 1.19`.** Use the built-in `JSON` module — **no `jason`**.
+- **Elixir `~> 1.18`.** Use the built-in `JSON` module (added in 1.18) — **no `jason`**.
 
 ### Spec fidelity
 

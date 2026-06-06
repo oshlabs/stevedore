@@ -67,6 +67,45 @@ jobs:
       - run: mix dialyzer --format github
 
   # ---------------------------------------------------------------------------
+  # compat — guard the lower Elixir bound declared in mix.exs (`~> 1.18`).
+  # Compile (warnings-as-errors) + the hermetic suite only. Format and dialyzer
+  # stay pinned to the .tool-versions toolchain in `fast`: formatter output is
+  # version-sensitive, so we don't re-check it under the older Elixir.
+  # ---------------------------------------------------------------------------
+  compat:
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    strategy:
+      matrix:
+        # The floor of mix.exs `elixir: "~> 1.18"`. OTP pinned to .tool-versions.
+        include:
+          - elixir: "1.18.4"
+            otp: "28.5.0.1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - name: Cache deps and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-${{ matrix.otp }}-${{ matrix.elixir }}-
+
+      - run: mix deps.get
+
+      - run: mix compile --warnings-as-errors
+
+      - run: mix test
+
+  # ---------------------------------------------------------------------------
   # external — the client (`Stevedore.Registry`/`copy`) against two real
   # registries that diverge on edge cases. STEP-9D, tag `:external`.
   #
