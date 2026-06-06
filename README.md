@@ -102,12 +102,16 @@ Target Elixir is `~> 1.19` (uses the built-in `JSON` module — no `jason`).
 
 ## Documentation
 
-- **[docs/EXAMPLES.md](docs/EXAMPLES.md)** — a complete, worked tour of every module and verb, with
-  the intent ("why") and expected result for each example.
-- **[docs/REFERENCES.md](docs/REFERENCES.md)** — the OCI/Docker/sigstore specifications Stevedore
-  implements, mapped section-by-section to the modules that implement them.
-- **[AGENTS.md](AGENTS.md)** — the project's design boundary and coding conventions (start here to
-  contribute).
+- **[Cookbook](https://hexdocs.pm/stevedore/examples.html)** — task-oriented recipes (mirror, build
+  from a directory, sign & verify, serve a registry, …), each a complete copy-paste block with its
+  intent and expected result. Start here to *do* something.
+- **[References](https://hexdocs.pm/stevedore/references.html)** — the OCI/Docker/sigstore
+  specifications Stevedore implements, mapped section-by-section to the modules that implement them.
+- **[Testing](https://hexdocs.pm/stevedore/testing.html)** — the test strategy: the hermetic core,
+  the `:external`/`:conformance`/`:interop` tag taxonomy, external tools used as *oracles* (never in
+  `lib/`), how to run each slice, and the CI job map.
+- **[AGENTS.md](https://hexdocs.pm/stevedore/agents.html)** — the project's design boundary and
+  coding conventions (start here to contribute).
 
 Every module carries a `@moduledoc` and every public function a `@doc` + `@spec` (with `iex>`
 doctests). API docs are generated with [ExDoc](https://github.com/elixir-lang/ex_doc) and, once
@@ -121,7 +125,7 @@ published, will be at <https://hexdocs.pm/stevedore>.
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](https://github.com/oshlabs/stevedore/blob/main/LICENSE).
 
 Stevedore draws directly on the design and conventions of the cloud-native container ecosystem —
 **Skopeo**, **cosign**, **crane**, and **ORAS** — which are themselves Apache-2.0. Matching that
