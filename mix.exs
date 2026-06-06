@@ -30,9 +30,14 @@ defmodule Stevedore.MixProject do
   # The standalone registry server boots only via an explicit Stevedore.start_link/1.
   def application do
     [
-      extra_applications: [:logger, :crypto, :public_key]
+      # :xmerl is test-only (the :conformance suite parses junit.xml). Deps compile under :prod, so
+      # consumers of the library never carry it — keeping the runtime weightless.
+      extra_applications: [:logger, :crypto, :public_key] ++ test_applications(Mix.env())
     ]
   end
+
+  defp test_applications(:test), do: [:xmerl]
+  defp test_applications(_), do: []
 
   # Test-only support modules (oracle-tool helpers, fixtures) compile only under :test.
   defp elixirc_paths(:test), do: ["lib", "test/support"]
