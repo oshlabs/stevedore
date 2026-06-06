@@ -10,6 +10,9 @@ defmodule Stevedore.Registry do
   This module requires the optional `:req` dependency; calling it without `req` raises a clear
   error. The functions return the shapes a runtime (e.g. Tank) consumes directly.
 
+  By default each call re-runs the token handshake. Pass a `Stevedore.Auth.Cache` as the
+  `:token_cache` option to reuse a bearer token across a pull's manifest + blob fetches.
+
   Spec: [OCI distribution-spec](https://github.com/opencontainers/distribution-spec/blob/main/spec.md)
   (pull, push, blob uploads, cross-repo mount).
   """
@@ -26,8 +29,8 @@ defmodule Stevedore.Registry do
   `Docker-Content-Digest`, the bytes are verified against it.
 
   Options: `:creds` (`t:Stevedore.Auth.creds/0`, default `:anonymous`), `:scheme` (default
-  `"https"`), `:max_retries`, and `:req_options` (a keyword merged into the `Req` request, e.g.
-  an `:adapter` for tests).
+  `"https"`), `:token_cache` (a `Stevedore.Auth.Cache` to reuse bearer tokens), `:max_retries`,
+  and `:req_options` (a keyword merged into the `Req` request, e.g. an `:adapter` for tests).
   """
   @spec manifest(Reference.t(), keyword()) ::
           {:ok, %{media_type: String.t(), digest: Digest.t(), raw: binary(), json: map()}}
@@ -211,7 +214,16 @@ defmodule Stevedore.Registry do
         ) ::
           {:ok, Req.Response.t()} | {:error, Error.t()}
   defp authed(ref, method, url, headers, body, opts, extra \\ []) do
-    case request(method, url, headers, body, opts, extra) do
+    # With an opt-in token cache, send a cached bearer preemptively — skipping the 401 and the
+    # token-endpoint round-trip. A stale token still 401s and falls back to a fresh handshake
+    # (re-stored below), so a cache hit never changes the result, only the request count.
+    first_extra =
+      case cached_token(ref, method, opts) do
+        {:ok, token} -> [{:auth, {:bearer, token}} | extra]
+        :miss -> extra
+      end
+
+    case request(method, url, headers, body, opts, first_extra) do
       {:ok, %{status: status} = resp} when status in 200..299 ->
         {:ok, resp}
 
@@ -243,6 +255,8 @@ defmodule Stevedore.Registry do
     case Auth.parse_challenge(header(resp, "www-authenticate") || "") do
       {:ok, challenge} ->
         with {:ok, token} <- token(ref, challenge, creds, opts) do
+          store_token(ref, method, opts, token)
+
           finish(
             ref,
             request(method, url, headers, body, opts, [{:auth, {:bearer, token}} | extra])
@@ -281,6 +295,33 @@ defmodule Stevedore.Registry do
       {:ok, token} -> {:ok, token}
       {:error, auth_error} -> {:error, error(ref, reason: auth_error)}
     end
+  end
+
+  # --- token cache (opt-in via opts[:token_cache]) --------------------------
+
+  @spec cached_token(Reference.t(), atom(), keyword()) :: {:ok, String.t()} | :miss
+  defp cached_token(ref, method, opts) do
+    case opts[:token_cache] do
+      nil -> :miss
+      cache -> Auth.Cache.get(cache, cache_key(ref, method))
+    end
+  end
+
+  @spec store_token(Reference.t(), atom(), keyword(), String.t()) :: :ok
+  defp store_token(ref, method, opts, token) do
+    case opts[:token_cache] do
+      nil -> :ok
+      cache -> Auth.Cache.put(cache, cache_key(ref, method), token)
+    end
+  end
+
+  # The scope a registry grants for this operation, per the distribution-spec resource form
+  # `repository:<name>:<actions>`. Reads (GET/HEAD) need `pull`; writes need `push,pull`. Used as
+  # the cache key so a preemptive lookup matches what the handshake stored for the same op.
+  @spec cache_key(Reference.t(), atom()) :: Auth.Cache.key()
+  defp cache_key(%Reference{registry: registry, repository: repository}, method) do
+    actions = if method in [:get, :head], do: "pull", else: "push,pull"
+    {registry, "repository:#{repository}:#{actions}"}
   end
 
   @spec request(

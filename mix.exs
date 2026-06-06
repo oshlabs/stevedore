@@ -1,7 +1,7 @@
 defmodule Stevedore.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @source_url "https://github.com/oshlabs/stevedore"
 
   def project do
@@ -108,7 +108,7 @@ defmodule Stevedore.MixProject do
           Stevedore.Referrers,
           Stevedore.Sign.Sigstore
         ],
-        "Registry client": [Stevedore.Registry, Stevedore.Auth],
+        "Registry client": [Stevedore.Registry, Stevedore.Auth, Stevedore.Auth.Cache],
         Transports: [
           Stevedore.Transport,
           Stevedore.Transport.Registry,

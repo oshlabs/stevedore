@@ -4,6 +4,17 @@ All notable changes to Stevedore are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-06-06
+
+### Added
+
+- **`Stevedore.Auth.Cache`** — an opt-in, in-process bearer-token cache. Pass it as the
+  `:token_cache` option to `Stevedore.Registry` to reuse a token across a pull's manifest + blob
+  fetches: the first request earns the token, the rest send it preemptively, skipping the `401`
+  and the token-endpoint round-trip. A stale token still falls back to a fresh handshake, so the
+  cache changes request count, never results. Off by default — nothing starts unless you start a
+  cache, preserving the weightless-by-default invariant.
+
 ## [0.1.0] - 2026-06-06
 
 First public release — the full at-rest OCI toolkit. Pre-1.0: the public API may still shift.

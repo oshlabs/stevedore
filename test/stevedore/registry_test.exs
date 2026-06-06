@@ -180,4 +180,72 @@ defmodule Stevedore.RegistryTest do
       assert {:ok, ["a", "b", "c"]} = run(&Registry.list_tags(@ref, &1), adapter)
     end
   end
+
+  describe "token cache (:token_cache)" do
+    # Adapter that reports, per request, whether it had to issue a 401 (an unauthenticated
+    # attempt) and whether the token endpoint was hit — so a test can count handshakes.
+    defp counting_adapter(parent) do
+      digest = Digest.compute(@index)
+
+      fn req ->
+        case {req.url.host, req.url.path} do
+          {"auth.test", "/token"} ->
+            send(parent, :token_endpoint_hit)
+            token_response(req)
+
+          {"registry.test", "/v2/library/alpine/manifests/3.20"} ->
+            if bearer?(req) do
+              {req,
+               Req.Response.new(
+                 status: 200,
+                 headers: [
+                   {"content-type", MediaType.oci_index()},
+                   {"docker-content-digest", to_string(digest)}
+                 ],
+                 body: @index
+               )}
+            else
+              send(parent, :unauthenticated_attempt)
+
+              {req,
+               Req.Response.new(
+                 status: 401,
+                 headers: [{"www-authenticate", @challenge}],
+                 body: ""
+               )}
+            end
+        end
+      end
+    end
+
+    test "a warm cache lets the second fetch skip the 401 and the token exchange" do
+      adapter = counting_adapter(self())
+      cache = start_supervised!(Stevedore.Auth.Cache)
+      opts = [req_options: [adapter: adapter], token_cache: cache]
+
+      assert {:ok, _} = Registry.manifest(@ref, opts)
+      assert {:ok, _} = Registry.manifest(@ref, opts)
+
+      # First call earns the token: one unauthenticated 401 + one token exchange.
+      assert_received :unauthenticated_attempt
+      assert_received :token_endpoint_hit
+      # Second call sends the cached bearer preemptively — neither happens again.
+      refute_received :unauthenticated_attempt
+      refute_received :token_endpoint_hit
+    end
+
+    test "without a cache, every fetch re-runs the handshake" do
+      adapter = counting_adapter(self())
+      opts = [req_options: [adapter: adapter]]
+
+      assert {:ok, _} = Registry.manifest(@ref, opts)
+      assert {:ok, _} = Registry.manifest(@ref, opts)
+
+      # Two independent handshakes: two 401s and two token exchanges.
+      assert_received :token_endpoint_hit
+      assert_received :token_endpoint_hit
+      assert_received :unauthenticated_attempt
+      assert_received :unauthenticated_attempt
+    end
+  end
 end

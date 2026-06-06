@@ -75,6 +75,23 @@ Stevedore.Digest.compute(raw) == dg   #=> true
 Blob fetch is robust to CDN redirects: `req` strips the `Authorization` header on any cross-host
 redirect, so the registry token never leaks to a presigned URL.
 
+**Reuse the auth token across a pull.** Each `Registry` call re-runs the `401 → token` handshake by
+default. For a multi-layer pull, start a `Stevedore.Auth.Cache` and thread it as `:token_cache`:
+the first call earns the token, the rest send it preemptively (skipping the extra round-trips). A
+stale token still falls back to a fresh handshake, so results never change — only the request
+count. Off by default; nothing starts until you create a cache.
+
+```elixir
+{:ok, cache} = Stevedore.Auth.Cache.start_link([])
+
+# Direct Registry calls share one token instead of re-authing each time:
+{:ok, top}   = Stevedore.Registry.manifest(ref, token_cache: cache)
+{:ok, bytes} = Stevedore.Registry.blob(ref, cfg_desc.digest, token_cache: cache)
+
+# `inspect` and `copy` accept it too — one handshake for a whole multi-layer mirror:
+Stevedore.copy("docker://alpine:3.20", "oci:./alpine:3.20", token_cache: cache)
+```
+
 **Private repositories** — pass credentials explicitly, or load them from the Docker config:
 
 ```elixir
