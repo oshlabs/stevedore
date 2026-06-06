@@ -1,0 +1,21 @@
+OCI image-spec JSON Schemas — vendored verbatim for Step 9B schema-validity tests.
+
+Upstream:  https://github.com/opencontainers/image-spec/tree/v1.1.1/schema
+Tag:       v1.1.1
+Commit:    147f9c13cedb47a0c4d9a11a222961073d585877
+Retrieved: 2026-06-06
+
+Files copied verbatim (do not edit — re-fetch from the pinned commit to bump):
+
+  config-schema.json          image config        (Stevedore.Config emits this)
+  content-descriptor.json     descriptor          (manifest config/layers/subject)
+  defs-descriptor.json        shared defs: mediaType, digest, urls, annotations
+  defs.json                   shared defs: int64, mapStringString, ...
+  image-index-schema.json     image index         (multi-arch + referrers index)
+  image-layout-schema.json    oci-layout marker    (kept for completeness)
+  image-manifest-schema.json  image manifest      (Stevedore.Image emits this)
+
+These are draft-04 schemas that $ref each other by bare filename. The resolver in
+test/support/schema_validator.ex maps each cross-file $ref back to the matching
+file here by basename. Bump procedure: re-run the curl in tmp/STEP-9B-SCHEMA.md
+against a new tag, update the Tag/Commit/Retrieved lines above.
