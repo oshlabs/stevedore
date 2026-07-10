@@ -111,15 +111,20 @@ defmodule Stevedore.TestingTest do
     assert digest == Stevedore.Image.digest(arm)
   end
 
-  @tag :tmp_dir
-  test "the extracted deckhand binary serves its command set over HTTP", %{tmp_dir: dir} do
+  # Extracts the deckhand binary from a fresh runnable image into `dir`.
+  defp extract_deckhand!(dir) do
     {:ok, image} = Testing.runnable_image()
     %{content: binary} = Enum.find(layer_entries(image), &(&1.name == "bin/deckhand"))
 
     bin = Path.join(dir, "deckhand")
     File.write!(bin, binary)
     File.chmod!(bin, 0o755)
+    bin
+  end
 
+  @tag :tmp_dir
+  test "the extracted deckhand binary serves its command set over HTTP", %{tmp_dir: dir} do
+    bin = extract_deckhand!(dir)
     http_port = free_test_port()
     port = Port.open({:spawn_executable, bin}, [:binary, args: [to_string(http_port)]])
     {:os_pid, os_pid} = Port.info(port, :os_pid)
@@ -138,6 +143,12 @@ defmodule Stevedore.TestingTest do
     assert body =~ expected
     assert {:ok, 200, body} = http_get(http_port, "/id")
     assert body =~ "uid="
+
+    # sleep/true/false have HTTP parity; exit deliberately does not — a
+    # remote peer must not be able to kill the container.
+    assert {:ok, 200, ""} = http_get(http_port, "/sleep/0")
+    assert {:ok, 200, ""} = http_get(http_port, "/true")
+    assert {:ok, 200, ""} = http_get(http_port, "/false")
     assert {:ok, 404, body} = http_get(http_port, "/exit")
     assert body =~ "help"
 
@@ -152,6 +163,11 @@ defmodule Stevedore.TestingTest do
 
     # Every request also surfaced as a console event.
     assert receive_until(port, "event: GET /hostname from")
+
+    # await-sig is applet-only: no HTTP path, no REPL command.
+    assert {:ok, 404, _} = http_get(http_port, "/await-sig")
+    true = Port.command(port, "await-sig\n")
+    assert receive_until(port, "unknown command: await-sig")
   end
 
   # Port data arrives in arbitrary chunks; accumulate until `needle` shows up.
@@ -192,13 +208,7 @@ defmodule Stevedore.TestingTest do
 
   @tag :tmp_dir
   test "a second deckhand on a taken port runs REPL-only", %{tmp_dir: dir} do
-    {:ok, image} = Testing.runnable_image()
-    %{content: binary} = Enum.find(layer_entries(image), &(&1.name == "bin/deckhand"))
-
-    bin = Path.join(dir, "deckhand")
-    File.write!(bin, binary)
-    File.chmod!(bin, 0o755)
-
+    bin = extract_deckhand!(dir)
     http_port = free_test_port()
     first = Port.open({:spawn_executable, bin}, [:binary, args: [to_string(http_port)]])
     {:os_pid, first_pid} = Port.info(first, :os_pid)
@@ -228,6 +238,155 @@ defmodule Stevedore.TestingTest do
       {:ok, data} -> recv_all(sock, acc <> data)
       {:error, :closed} -> acc
     end
+  end
+
+  test "runnable_image carries an applet symlink per command" do
+    {:ok, image} = Testing.runnable_image()
+    entries = Map.new(layer_entries(image), &{&1.name, &1})
+
+    # Targets deliberately mix relative and absolute (extraction coverage).
+    assert %{type: :symlink, linkname: "deckhand"} = entries["bin/cat"]
+    assert %{type: :symlink, linkname: "/bin/deckhand"} = entries["bin/exit"]
+
+    for name <-
+          ~w(cat env id hostname uname ifaces mounts ls find ping ping6 resolve help sleep exit true false await-sig) do
+      assert %{type: :symlink} = entries["bin/" <> name]
+    end
+  end
+
+  @tag :tmp_dir
+  test "applets run to completion", %{tmp_dir: dir} do
+    bin = extract_deckhand!(dir)
+
+    probe = Path.join(dir, "probe")
+    File.write!(probe, "cargo\n")
+    assert {"cargo\n", 0} = System.cmd(bin, ["cat", probe])
+
+    # `cat` without a path echoes stdin until EOF (sh here only builds the pipe).
+    assert {"stow\naway\n", 0} =
+             System.cmd("sh", ["-c", "printf 'stow\\naway\\n' | '#{bin}' cat"])
+
+    assert {"", 3} = System.cmd(bin, ["exit", "3"])
+    assert {"", 0} = System.cmd(bin, ["sleep", "0"])
+    assert {"", 0} = System.cmd(bin, ["true"])
+    assert {"", 1} = System.cmd(bin, ["false"])
+
+    assert {out, 0} = System.cmd(bin, ["env"], env: [{"DECKHAND_APPLET_TEST", "aye"}])
+    assert out =~ "DECKHAND_APPLET_TEST=aye\n"
+
+    # The diagnostics commands are applets too — same output as the REPL.
+    assert {uname, 0} = System.cmd(bin, ["uname"])
+    assert uname =~ "Linux"
+    assert {mounts, 0} = System.cmd(bin, ["mounts"])
+    assert mounts =~ " / "
+    assert {help, 0} = System.cmd(bin, ["help"])
+    assert help =~ "deckhand"
+  end
+
+  @tag :tmp_dir
+  test "argv[0] dispatch works through a real symlink", %{tmp_dir: dir} do
+    bin = extract_deckhand!(dir)
+    {:ok, nodename} = :inet.gethostname()
+
+    link = Path.join(dir, "hostname")
+    File.ln_s!(bin, link)
+    assert {out, 0} = System.cmd(link, [])
+    assert out == "#{nodename}\n"
+
+    false_link = Path.join(dir, "false")
+    File.ln_s!(bin, false_link)
+    assert {"", 1} = System.cmd(false_link, [])
+  end
+
+  @tag :tmp_dir
+  test "PORT/applet disambiguation: digits boot the server, names run applets",
+       %{tmp_dir: dir} do
+    bin = extract_deckhand!(dir)
+
+    # A name runs the applet: exact output, no banner, no prompt, no events.
+    {:ok, nodename} = :inet.gethostname()
+    assert {out, 0} = System.cmd(bin, ["hostname"])
+    assert out == "#{nodename}\n"
+
+    # An unknown name is neither PORT nor applet: usage, exit 2.
+    assert {_, 2} = System.cmd(bin, ["bogus"])
+
+    # An all-digits first arg still means PORT: REPL + server boot unchanged.
+    http_port = free_test_port()
+    port = Port.open({:spawn_executable, bin}, [:binary, args: [to_string(http_port)]])
+    {:os_pid, os_pid} = Port.info(port, :os_pid)
+    on_exit(fn -> System.cmd("kill", ["-KILL", to_string(os_pid)], stderr_to_stdout: true) end)
+
+    assert_receive {^port, {:data, "deckhand aboard.\n" <> _}}, 2_000
+    assert {:ok, 200, _} = http_get(http_port, "/hostname")
+  end
+
+  @tag :tmp_dir
+  test "await-sig blocks until any signal, prints its details, and exits", %{tmp_dir: dir} do
+    bin = extract_deckhand!(dir)
+
+    port = Port.open({:spawn_executable, bin}, [:binary, :exit_status, args: ["await-sig"]])
+    {:os_pid, os_pid} = Port.info(port, :os_pid)
+    :ok = await_signals_blocked(os_pid)
+    {_, 0} = System.cmd("kill", ["-USR1", to_string(os_pid)])
+
+    # The one line — with the signal's details — is the whole output.
+    assert_receive {^port, {:data, line}}, 2_000
+    assert line =~ ~r/^event: signal USR1 \(10\) code=0 pid=\d+ uid=\d+\n$/
+    assert_receive {^port, {:exit_status, 0}}, 2_000
+
+    # TERM is reported and exits 0 — not killed by the default disposition.
+    port2 = Port.open({:spawn_executable, bin}, [:binary, :exit_status, args: ["await-sig"]])
+    {:os_pid, os_pid2} = Port.info(port2, :os_pid)
+    :ok = await_signals_blocked(os_pid2)
+    {_, 0} = System.cmd("kill", ["-TERM", to_string(os_pid2)])
+    assert receive_until(port2, "event: signal TERM (15)")
+    assert_receive {^port2, {:exit_status, 0}}, 2_000
+
+    # Any argument is a usage error.
+    assert {_, 2} = System.cmd(bin, ["await-sig", "8080"])
+  end
+
+  # await-sig's first act is blocking every signal; poll /proc until that
+  # mask is visible, so the kill below lands after signalfd is armed (before
+  # it, the default disposition would terminate the process).
+  defp await_signals_blocked(os_pid, attempts \\ 100) do
+    blocked =
+      with {:ok, status} <- File.read("/proc/#{os_pid}/status"),
+           [hex] <- Regex.run(~r/^SigBlk:\s*(\S+)$/m, status, capture: :all_but_first) do
+        String.to_integer(hex, 16) > 0
+      else
+        _ -> false
+      end
+
+    cond do
+      blocked ->
+        :ok
+
+      attempts == 0 ->
+        {:error, :signals_never_blocked}
+
+      true ->
+        Process.sleep(10)
+        await_signals_blocked(os_pid, attempts - 1)
+    end
+  end
+
+  @tag :tmp_dir
+  test "the REPL propagates `exit N` as the process exit status", %{tmp_dir: dir} do
+    bin = extract_deckhand!(dir)
+
+    port =
+      Port.open({:spawn_executable, bin}, [
+        :binary,
+        :exit_status,
+        args: [to_string(free_test_port())]
+      ])
+
+    assert_receive {^port, {:data, "deckhand aboard.\n" <> _}}, 2_000
+    true = Port.command(port, "exit 7\n")
+    assert receive_until(port, "going ashore.")
+    assert_receive {^port, {:exit_status, 7}}, 2_000
   end
 
   test "two registries run concurrently" do

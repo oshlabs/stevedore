@@ -96,13 +96,21 @@ The four layers, fastest first:
 provides the hermetic building blocks the suites above compose: `start_registry!/1` (a real
 `/v2` registry on a free localhost port, linked to the test), `synthetic_image/1` (deterministic
 in-memory contents that exercise tricky tar shapes), and `runnable_image/1` — a synthetic image
-carrying **deckhand** (`priv/deckhand/`, ~19 KB, statically linked, no libc), so a dependent's
+carrying **deckhand** (`priv/deckhand/`, ~25 KB, statically linked, no libc), so a dependent's
 runtime tests can actually spawn a process from a pulled image. deckhand is a container
 diagnostic: an event-printing REPL (PTY resizes, signals, HTTP hits; it runs until signaled, so
 it is also the keepalive process) plus a GET-only web server on `0.0.0.0`/`::` whose URL space
 mirrors the command set (`/env`, `/id`, `/ifaces`, `/mounts`, `/cat/PATH`, `/ls/PATH`, `/find/PATH`, `/ping/H`,
 `/ping6/H`, `/resolve/N`, …), so a test can inspect the container's view of its environment, filesystem,
-network, and DNS from outside.
+network, and DNS from outside. The image also ships busybox-style **applet symlinks**, one per
+command (`/bin/cat`, `/bin/env`, `/bin/sleep`, `/bin/exit`, `/bin/true`, `/bin/false`, … →
+`deckhand`): argv[0] dispatch runs one command to completion — plain stdout, exit 0 or the
+applet's code — covering the run-to-completion process shapes (nonzero workload exits,
+sleep-then-exit restart timing, stdin echo until EOF) without a distro image. Every command has
+parity across all three frontends (REPL, HTTP, applet), except that `exit` is never served over
+HTTP. One applet-only extra: `/bin/await-sig` blocks until any signal, prints its details
+(name, number, `si_code`, sender pid/uid; for SIGWINCH the new console size) as its single
+line of output, and exits 0 — for asserting signal and PTY-resize delivery from outside.
 
 `runnable_image(platforms: :all)` returns both arches under a real OCI index for
 index → platform-manifest resolution tests.

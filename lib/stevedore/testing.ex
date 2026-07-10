@@ -108,7 +108,7 @@ defmodule Stevedore.Testing do
 
   @doc """
   Builds a small deterministic image whose contents actually **run**: the
-  bundled `deckhand` binary (statically linked, libc-free, ~19 KB; source,
+  bundled `deckhand` binary (statically linked, libc-free, ~25 KB; source,
   pinned-Zig `build.sh`, and CI byte-diff guard in `priv/deckhand/`) layered
   at `/bin/deckhand`, plus the `etc/stevedore-test` marker file.
 
@@ -120,6 +120,21 @@ defmodule Stevedore.Testing do
   `/find/PATH`, `/ping/H`, `/ping6/H`,
   `/resolve/N` — so tests can inspect the container's view of its world from
   outside. See `priv/deckhand/README.md`.
+
+  The layer also carries busybox-style **applet symlinks** — one per command
+  (`/bin/cat`, `/bin/env`, `/bin/id`, `/bin/hostname`, `/bin/uname`,
+  `/bin/ifaces`, `/bin/mounts`, `/bin/ls`, `/bin/find`, `/bin/ping`,
+  `/bin/ping6`, `/bin/resolve`, `/bin/help`, `/bin/sleep`, `/bin/exit`,
+  `/bin/true`, `/bin/false` → `deckhand`); argv[0] dispatch runs that
+  command to completion — plain stdout, no banner, exit 0 or the applet's
+  code — covering the run-to-completion process shapes
+  (`command: ["/bin/exit", "3"]`, `["/bin/sleep", "3"]`, `/bin/cat` echoing
+  stdin on a tty) that would otherwise need a distro image. One applet has
+  no REPL/HTTP counterpart: `/bin/await-sig` blocks until **any** signal
+  arrives, prints its details as one line — name, number, si_code, sender
+  pid/uid, and for SIGWINCH the new console size — and exits 0. That one
+  line is its only output, so a test can assert signal (or PTY-resize)
+  delivery from outside verbatim.
 
   With no options the image targets the host platform and its config is
   `%{entrypoint: ["/bin/deckhand"], cmd: []}`.
@@ -179,10 +194,42 @@ defmodule Stevedore.Testing do
           &%{name: &1, type: :regular, mode: 0o644, size: 0, linkname: nil, content: ""}
         )
 
+      # Busybox-style applet symlinks — argv[0] dispatch in the binary runs
+      # that command to completion (see priv/deckhand/README.md); every
+      # deckhand command is an applet. Targets deliberately mix relative and
+      # absolute: both must extract correctly, so the split adds coverage
+      # for free.
+      applet_links =
+        %{
+          "bin/cat" => "deckhand",
+          "bin/env" => "deckhand",
+          "bin/id" => "deckhand",
+          "bin/hostname" => "deckhand",
+          "bin/ls" => "deckhand",
+          "bin/uname" => "deckhand",
+          "bin/ifaces" => "deckhand",
+          "bin/mounts" => "deckhand",
+          "bin/help" => "deckhand",
+          "bin/find" => "/bin/deckhand",
+          "bin/sleep" => "/bin/deckhand",
+          "bin/exit" => "/bin/deckhand",
+          "bin/true" => "/bin/deckhand",
+          "bin/false" => "/bin/deckhand",
+          "bin/ping" => "/bin/deckhand",
+          "bin/ping6" => "/bin/deckhand",
+          "bin/resolve" => "/bin/deckhand",
+          "bin/await-sig" => "/bin/deckhand"
+        }
+        |> Enum.sort()
+        |> Enum.map(fn {name, target} ->
+          %{name: name, type: :symlink, mode: 0o777, size: 0, linkname: target, content: nil}
+        end)
+
       entries =
         dir_entries([marker, bin_path]) ++
           skeleton_dirs ++
           skeleton_files ++
+          applet_links ++
           [
             %{
               name: bin_path,

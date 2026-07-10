@@ -1,15 +1,28 @@
 //! deckhand — the one who does useful work aboard.
 //!
 //! A statically linked, libc-free container diagnostic tool: one command
-//! core, two frontends. The REPL runs the commands and prints unsolicited
+//! core, three frontends. The REPL runs the commands and prints unsolicited
 //! events (console resizes, signals, HTTP hits); a minimal GET-only web
 //! server mirrors the same command set as its URL space, so an outsider can
-//! see how the app inside the container sees its world:
+//! see how the app inside the container sees its world; and busybox-style
+//! applets run a single command to completion for the run-to-completion
+//! process shapes (exit with a code, echo stdin, print env, sleep and exit):
 //!
 //!   deckhand [PORT]        REPL + server on PORT (default 8080), 0.0.0.0 and ::
 //!                          (a second instance in the same netns finds the port
 //!                          taken and runs REPL-only — deliberate, so tests can
 //!                          exercise a second process inside one container)
+//!
+//!   deckhand APPLET [ARG]  run one applet to completion — plain stdout, no
+//!                          banner, no events, exit 0 (or the applet's code).
+//!                          Also reached via an argv[0] symlink, busybox-style
+//!                          (/bin/cat -> deckhand). An all-digits first arg is
+//!                          a PORT; anything else names an applet. Every
+//!                          command is an applet; cat with no PATH copies
+//!                          stdin->stdout until EOF, and sleep/exit/true/false
+//!                          express their result as the process exit status.
+//!                          Still nothing shell-shaped (no pipes, flags,
+//!                          globbing, or $VAR expansion).
 //!
 //!   REPL commands / HTTP paths (identical output):
 //!     help      GET /            this list
@@ -27,7 +40,20 @@
 //!     ping6 H   GET /ping6/H     one ICMPv6 echo, forced IPv6 (AAAA only) —
 //!                                proves the v6 path to a dual-stack host
 //!     resolve N GET /resolve/N   A + AAAA via a stub resolver (/etc/resolv.conf)
-//!     exit      (REPL only — remote peers must not be able to kill the container)
+//!     sleep N   GET /sleep/N     sleep N seconds, then return
+//!     true      GET /true        nothing, successfully (applet: exit 0)
+//!     false     GET /false       nothing, unsuccessfully (applet: exit 1)
+//!     exit [N]  (REPL/applet only — leave with status N, default 0; never
+//!                over HTTP: remote peers must not be able to kill the container)
+//!
+//!   Applet only:
+//!     await-sig           block until ANY signal arrives (no REPL, no
+//!                         webserver), print its details as one line — name,
+//!                         number, si_code, sender pid/uid, and for WINCH the
+//!                         new console size — then exit 0. The line is the
+//!                         applet's only output, so a test can assert on it
+//!                         verbatim; the run-to-completion spelling of "wait
+//!                         for exactly one signal".
 //!
 //!   Unsolicited console events:
 //!     event: resize 120x40         SIGWINCH → TIOCGWINSZ (tests PTY resize plumbing)
@@ -115,6 +141,16 @@ fn emitNum(n: u64) void {
     emit(fmtNum(&buf, n));
 }
 
+// si_code can be negative (e.g. SI_TKILL = -6).
+fn emitInt(n: i64) void {
+    if (n < 0) {
+        emit("-");
+        emitNum(@intCast(-n));
+    } else {
+        emitNum(@intCast(n));
+    }
+}
+
 fn sinkBody() []const u8 {
     if (out_truncated) {
         const marker = "\n[truncated]\n";
@@ -136,13 +172,28 @@ var line_len: usize = 0;
 
 pub fn main(init: std.process.Init.Minimal) void {
     const argv = init.args.vector;
+
+    // Busybox-style multi-call: a recognized applet name as argv[0]'s
+    // basename (a symlink such as /bin/cat -> deckhand) runs that applet to
+    // completion — never the REPL/server.
+    if (argv.len >= 1) {
+        const name = basename(std.mem.span(argv[0]));
+        if (isApplet(name))
+            appletMain(name, if (argv.len >= 2) std.mem.span(argv[1]) else null);
+    }
+
     var port: u16 = 8080;
     if (argv.len >= 2) {
         const arg = std.mem.span(argv[1]);
-        port = parsePort(arg) orelse {
-            w("deckhand: usage: deckhand [PORT]\n");
-            linux.exit_group(2);
-        };
+        // Disambiguation: an all-digits first arg is a PORT (REPL + server,
+        // as ever); anything else names an applet.
+        if (allDigits(arg)) {
+            port = parsePort(arg) orelse usageExit();
+        } else if (isApplet(arg)) {
+            appletMain(arg, if (argv.len >= 3) std.mem.span(argv[2]) else null);
+        } else {
+            usageExit();
+        }
     }
 
     // Block the signals we watch and receive them via signalfd instead, so
@@ -256,6 +307,19 @@ fn flushEvent() void {
     sinkReset();
 }
 
+// Linux signal names, indexed by signo - 1 (identical on x86_64/aarch64).
+const sig_names = [_][]const u8{
+    "HUP",  "INT",    "QUIT", "ILL",   "TRAP", "ABRT", "BUS",  "FPE",
+    "KILL", "USR1",   "SEGV", "USR2",  "PIPE", "ALRM", "TERM", "STKFLT",
+    "CHLD", "CONT",   "STOP", "TSTP",  "TTIN", "TTOU", "URG",  "XCPU",
+    "XFSZ", "VTALRM", "PROF", "WINCH", "IO",   "PWR",  "SYS",
+};
+
+fn signalName(signo: u32) []const u8 {
+    if (signo >= 1 and signo <= sig_names.len) return sig_names[signo - 1];
+    return "?"; // realtime or out-of-range: the number is printed alongside
+}
+
 fn handleSignal(sigfd: i32) void {
     var info: linux.signalfd_siginfo = undefined;
     const rc = linux.read(sigfd, @ptrCast(&info), @sizeOf(linux.signalfd_siginfo));
@@ -265,25 +329,25 @@ fn handleSignal(sigfd: i32) void {
         @intFromEnum(linux.SIG.TERM), @intFromEnum(linux.SIG.INT) => {
             sinkReset();
             emit("event: signal ");
-            emit(if (info.signo == @intFromEnum(linux.SIG.TERM)) "TERM" else "INT");
+            emit(signalName(info.signo));
             emit(", leaving the ship\n");
             flushEvent();
             linux.exit_group(0);
         },
-        @intFromEnum(linux.SIG.HUP) => w("event: signal HUP\n"),
-        @intFromEnum(linux.SIG.USR1) => w("event: signal USR1\n"),
-        @intFromEnum(linux.SIG.USR2) => w("event: signal USR2\n"),
-        else => w("event: signal (unnamed)\n"),
+        else => {
+            sinkReset();
+            emit("event: signal ");
+            emit(signalName(info.signo));
+            emit("\n");
+            flushEvent();
+        },
     }
     prompt();
 }
 
 fn reportWinsize(initial: bool) void {
     var ws: std.posix.winsize = undefined;
-    // stdout may be redirected while stdin is the tty (or vice versa); try both.
-    var rc = linux.ioctl(1, linux.T.IOCGWINSZ, @intFromPtr(&ws));
-    if (!ok(rc)) rc = linux.ioctl(0, linux.T.IOCGWINSZ, @intFromPtr(&ws));
-    if (!ok(rc)) return; // no tty, nothing to report
+    if (!readWinsize(&ws)) return; // no tty, nothing to report
     sinkReset();
     emit(if (initial) "console is " else "event: resize ");
     emitNum(ws.col);
@@ -291,6 +355,13 @@ fn reportWinsize(initial: bool) void {
     emitNum(ws.row);
     emit("\n");
     flushEvent();
+}
+
+fn readWinsize(ws: *std.posix.winsize) bool {
+    // stdout may be redirected while stdin is the tty (or vice versa); try both.
+    var rc = linux.ioctl(1, linux.T.IOCGWINSZ, @intFromPtr(ws));
+    if (!ok(rc)) rc = linux.ioctl(0, linux.T.IOCGWINSZ, @intFromPtr(ws));
+    return ok(rc);
 }
 
 fn trim(s0: []const u8) []const u8 {
@@ -309,8 +380,17 @@ fn handleLine(line: []const u8) void {
         arg = trim(line[sp + 1 ..]);
     }
     if (eq(cmd, "exit") or eq(cmd, "quit")) {
+        // Applet parity: `exit N` leaves with status N — the REPL spelling
+        // of a nonzero workload exit.
+        var code: u32 = 0;
+        if (arg.len != 0) {
+            code = parseDigits(arg, 255) orelse {
+                w("exit: usage: exit [N]  (N in 0-255)\n");
+                return;
+            };
+        }
         w("going ashore.\n");
-        linux.exit_group(0);
+        linux.exit_group(@intCast(code));
     }
     sinkReset();
     if (!runCommand(cmd, arg)) {
@@ -319,6 +399,133 @@ fn handleLine(line: []const u8) void {
         emit(" (try 'help')\n");
     }
     w(sinkBody());
+}
+
+// ---------------------------------------------------------------------------
+// applets — busybox-style multi-call: run one command to completion and exit.
+// Reached via an argv[0] symlink (/bin/cat -> deckhand) or `deckhand APPLET`.
+// Plain stdout, no banner, no events, not a PTY citizen. Every command is an
+// applet, but nothing shell-shaped (no pipes, flags, globbing, or $VAR
+// expansion); a test needing more uses a real image.
+// ---------------------------------------------------------------------------
+
+const applet_names = [_][]const u8{
+    "help", "env",  "id",    "hostname", "uname", "ifaces", "mounts", "cat",   "ls",
+    "find", "ping", "ping6", "resolve",  "sleep", "exit",   "true",   "false", "await-sig",
+};
+
+fn isApplet(name: []const u8) bool {
+    for (applet_names) |a| if (eq(name, a)) return true;
+    return false;
+}
+
+fn basename(path: []const u8) []const u8 {
+    if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| return path[i + 1 ..];
+    return path;
+}
+
+fn usageExit() noreturn {
+    w("deckhand: usage: deckhand [PORT | APPLET [ARG]]\n");
+    linux.exit_group(2);
+}
+
+// arg0 is null when no argument was given — `cat` needs that to tell stdin
+// mode apart from an empty path, `exit` to default to 0. The process-exit
+// shapes (exit/true/false, sleep's usage error) are handled here rather than
+// in the core because only an applet has an exit status to express; signals
+// also keep their default dispositions here (no signalfd), so TERM/INT kill
+// a sleeping applet — same shape as coreutils sleep.
+fn appletMain(name: []const u8, arg0: ?[]const u8) noreturn {
+    const arg = arg0 orelse "";
+    if (eq(name, "true")) linux.exit_group(0);
+    if (eq(name, "false")) linux.exit_group(1);
+    if (eq(name, "exit")) {
+        if (arg0 == null) linux.exit_group(0); // like the shell builtin
+        const code = parseDigits(arg, 255) orelse {
+            w("exit: usage: exit [N]  (N in 0-255)\n");
+            linux.exit_group(2);
+        };
+        linux.exit_group(@intCast(code));
+    }
+    if (eq(name, "sleep")) {
+        const secs = parseDigits(arg, 100_000_000) orelse {
+            w("sleep: usage: sleep SECONDS\n");
+            linux.exit_group(2);
+        };
+        doSleep(secs);
+        linux.exit_group(0);
+    }
+    if (eq(name, "cat") and arg0 == null) catStdin();
+    if (eq(name, "await-sig")) awaitSig(arg0);
+    // Everything else reuses the command core verbatim: same output as the
+    // REPL and HTTP frontends.
+    sinkReset();
+    _ = runCommand(name, arg);
+    w(sinkBody());
+    linux.exit_group(0);
+}
+
+// await-sig: block until ANY signal arrives, print its details as one line —
+// name, number, si_code, sender pid/uid, and for WINCH the new console
+// size — then exit 0. No REPL, no webserver; the line is the applet's ONLY
+// stdout output, so a test can assert on it verbatim. Applet-only by design:
+// the REPL already streams signal events continuously; this is the
+// run-to-completion spelling of "wait for exactly one signal". KILL/STOP
+// are unblockable and never reported — they just do what they always do.
+fn awaitSig(arg0: ?[]const u8) noreturn {
+    if (arg0 != null) {
+        w("await-sig: usage: await-sig (no arguments)\n");
+        linux.exit_group(2);
+    }
+    var mask = linux.sigfillset();
+    _ = linux.sigprocmask(linux.SIG.BLOCK, &mask, null);
+    const sigfd: i32 = @intCast(linux.signalfd(-1, &mask, 0));
+
+    var info: linux.signalfd_siginfo = undefined;
+    while (true) {
+        const rc = linux.read(sigfd, @ptrCast(&info), @sizeOf(linux.signalfd_siginfo));
+        if (ok(rc) and rc != 0) break;
+        if (linux.errno(rc) != .INTR) linux.exit_group(1);
+    }
+
+    sinkReset();
+    emit("event: signal ");
+    emit(signalName(info.signo));
+    emit(" (");
+    emitNum(info.signo);
+    emit(") code=");
+    emitInt(info.code);
+    emit(" pid=");
+    emitNum(info.pid);
+    emit(" uid=");
+    emitNum(info.uid);
+    if (info.signo == @intFromEnum(linux.SIG.WINCH)) {
+        var ws: std.posix.winsize = undefined;
+        if (readWinsize(&ws)) {
+            emit(" resize ");
+            emitNum(ws.col);
+            emit("x");
+            emitNum(ws.row);
+        }
+    }
+    emit("\n");
+    w(sinkBody());
+    linux.exit_group(0);
+}
+
+// `cat` with no path: stdin -> stdout until EOF — the run-to-completion echo
+// shape (attach/PTY handoff tests pipe through it).
+fn catStdin() noreturn {
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        const n = linux.read(0, &buf, buf.len);
+        if (!ok(n)) {
+            if (linux.errno(n) == .INTR) continue;
+            linux.exit_group(1);
+        }
+        if (n == 0) linux.exit_group(0);
+        wfd(1, buf[0..n]);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -352,10 +559,32 @@ fn runCommand(cmd: []const u8, arg: []const u8) bool {
         cmdPing6(arg);
     } else if (eq(cmd, "resolve")) {
         cmdResolve(arg);
+    } else if (eq(cmd, "sleep")) {
+        cmdSleep(arg);
+    } else if (eq(cmd, "true") or eq(cmd, "false")) {
+        // Nothing, (un)successfully. Only meaningful as applets, where the
+        // exit status (0/1) is the point; kept in the core for parity.
     } else {
         return false;
     }
     return true;
+}
+
+// Sleeps inline: the REPL and HTTP block for the duration (single-threaded
+// loop — same trade as ping's 2 s wait), making /sleep/N a delayed-response
+// endpoint. This is a test image; a wedged loop is the caller's own doing.
+fn cmdSleep(arg: []const u8) void {
+    const secs = parseDigits(arg, 100_000_000) orelse
+        return emit("sleep: usage: sleep SECONDS\n");
+    doSleep(secs);
+}
+
+fn doSleep(secs: u32) void {
+    var ts = linux.timespec{ .sec = @intCast(secs), .nsec = 0 };
+    while (true) {
+        const rc = linux.nanosleep(&ts, &ts);
+        if (ok(rc) or linux.errno(rc) != .INTR) break;
+    }
 }
 
 fn cmdHelp() void {
@@ -374,7 +603,14 @@ fn cmdHelp() void {
         \\  ping H    /ping/H      one ICMP echo (IPv4/IPv6 literal or name)
         \\  ping6 H   /ping6/H     one ICMPv6 echo, forced IPv6 (AAAA only)
         \\  resolve N /resolve/N   A + AAAA via /etc/resolv.conf
-        \\  exit                   REPL only
+        \\  sleep N   /sleep/N     sleep N seconds, then return
+        \\  true      /true        nothing, successfully (applet: exit 0)
+        \\  false     /false       nothing, unsuccessfully (applet: exit 1)
+        \\  exit [N]               REPL only — leave with status N (default 0)
+        \\every command is also an applet (argv[0] symlink or deckhand APPLET
+        \\[ARG]); applet cat with no PATH copies stdin to stdout until EOF.
+        \\applet only: await-sig — block until any signal (incl. WINCH), print
+        \\its details as one line, exit 0
         \\
     );
 }
@@ -684,14 +920,24 @@ fn emitIp6(addr: [16]u8) void {
     if (best_start == 0 and best_len == 8) return; // "::" already emitted
 }
 
-fn parsePort(s: []const u8) ?u16 {
-    if (s.len == 0) return null;
+fn allDigits(s: []const u8) bool {
+    if (s.len == 0) return false;
+    for (s) |c| if (c < '0' or c > '9') return false;
+    return true;
+}
+
+fn parseDigits(s: []const u8, max: u32) ?u32 {
+    if (!allDigits(s)) return null;
     var n: u32 = 0;
     for (s) |c| {
-        if (c < '0' or c > '9') return null;
         n = n * 10 + (c - '0');
-        if (n > 65535) return null;
+        if (n > max) return null;
     }
+    return n;
+}
+
+fn parsePort(s: []const u8) ?u16 {
+    const n = parseDigits(s, 65535) orelse return null;
     if (n == 0) return null;
     return @intCast(n);
 }
@@ -886,7 +1132,7 @@ fn respond(fd: i32, status: []const u8, body: []const u8) void {
     var num: [20]u8 = undefined;
     var len: usize = 0;
     for ([_][]const u8{
-        "HTTP/1.1 ", status,
+        "HTTP/1.1 ",                                        status,
         "\r\nContent-Type: text/plain\r\nContent-Length: ", fmtNum(&num, body.len),
         "\r\nConnection: close\r\n\r\n",
     }) |part| {

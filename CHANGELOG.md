@@ -15,7 +15,7 @@ All notable changes to Stevedore are documented here. The format is based on
   (or Docker manifest list) from per-platform built images; the result is a `Stevedore.copy/3`
   source like any image, so a built index can be pushed whole (`all: true`) or per platform.
 - **`Stevedore.Testing.runnable_image/1`** — a synthetic image whose contents actually *run*:
-  **`deckhand`**, a ~19 KB statically linked, libc-free container-diagnostics binary (built
+  **`deckhand`**, a ~25 KB statically linked, libc-free container-diagnostics binary (built
   from `priv/deckhand/` with a pinned Zig; builds are byte-reproducible and CI rebuilds and
   byte-diffs the checked-in blobs) layered at `/bin/deckhand` — so dependents'
   runtime/exec/reconciler tests need no distro images. It is an event-printing REPL (console
@@ -30,6 +30,26 @@ All notable changes to Stevedore are documented here. The format is based on
   gracefully to REPL-only, so tests can exec another copy inside a running container.
   `platforms: :all` returns both linux/amd64 and linux/arm64 under a real OCI index for
   hermetic index-resolution tests.
+- **deckhand applets** — busybox-style multi-call with full three-way parity: every deckhand
+  command works as a REPL command, an HTTP GET path, *and* a standalone applet. The runnable
+  image carries one symlink per command (`/bin/cat`, `/bin/env`, `/bin/id`, `/bin/hostname`,
+  `/bin/uname`, `/bin/ifaces`, `/bin/mounts`, `/bin/ls`, `/bin/find`, `/bin/ping`,
+  `/bin/ping6`, `/bin/resolve`, `/bin/help`, `/bin/sleep`, `/bin/exit`, `/bin/true`,
+  `/bin/false` → `deckhand`); argv[0] dispatch — or the equivalent `deckhand APPLET [ARG]`
+  spelling (an all-digits first arg still means PORT) — runs that command to completion:
+  plain stdout, no banner, no events, exit 0 or the applet's code. Where the REPL covers
+  interactive, long-lived process shapes, the applets cover the run-to-completion ones
+  (`exit N` for nonzero workload exits, `sleep N` for restart timing, `cat` with no path
+  echoing stdin until EOF, `env` without a shell), so dependents' runtime tests need no
+  distro images for those either. New commands `sleep N`, `true`, and `false` also work in
+  the REPL and over HTTP (`/sleep/N` is a delayed-response endpoint), and the REPL's `exit`
+  now takes an optional status (`exit 7` exits the container with 7). The one parity
+  exception is deliberate: `exit` stays off HTTP — remote peers must not be able to kill the
+  container. One applet has no REPL/HTTP counterpart: **`await-sig`** blocks until *any*
+  signal arrives, prints its details as one line — name, number, `si_code`, sender pid/uid,
+  and for SIGWINCH the new console size — then exits 0; that line is its only output, so a
+  test can assert signal (or PTY-resize) delivery from outside verbatim. Nothing is
+  shell-shaped: no pipes, flags, globbing, or `$VAR` expansion.
 
 ## [0.2.0] - 2026-06-06
 
