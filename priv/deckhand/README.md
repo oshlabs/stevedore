@@ -31,7 +31,8 @@ port is taken, it serves on the other and says so.
 | `cat PATH`  | `GET /cat/PATH`| one file, byte-for-byte — rootfs-content probes |
 | `ls PATH`   | `GET /ls/PATH` | directory entries, `/`-suffixed for dirs (`PATH` defaults to `/`) |
 | `find PATH` | `GET /find/PATH` | recursive path listing; symlinks printed, never followed |
-| `ping H`    | `GET /ping/H`  | one ICMP echo; IPv4/IPv6 literal or DNS name |
+| `ping H`    | `GET /ping/H`  | one ICMP echo; IPv4/IPv6 literal or DNS name (names prefer A, falling back to AAAA) |
+| `ping6 H`   | `GET /ping6/H` | one ICMPv6 echo, forced IPv6 (AAAA only) — proves the v6 path to a dual-stack host |
 | `resolve N` | `GET /resolve/N` | A + AAAA via a stub resolver (`/etc/resolv.conf`) |
 | `exit`      | *(REPL only)*  | remote peers must not be able to kill the container |
 

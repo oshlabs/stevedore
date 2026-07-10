@@ -101,7 +101,7 @@ runtime tests can actually spawn a process from a pulled image. deckhand is a co
 diagnostic: an event-printing REPL (PTY resizes, signals, HTTP hits; it runs until signaled, so
 it is also the keepalive process) plus a GET-only web server on `0.0.0.0`/`::` whose URL space
 mirrors the command set (`/env`, `/id`, `/ifaces`, `/mounts`, `/cat/PATH`, `/ls/PATH`, `/find/PATH`, `/ping/H`,
-`/resolve/N`, …), so a test can inspect the container's view of its environment, filesystem,
+`/ping6/H`, `/resolve/N`, …), so a test can inspect the container's view of its environment, filesystem,
 network, and DNS from outside.
 
 `runnable_image(platforms: :all)` returns both arches under a real OCI index for

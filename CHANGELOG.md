@@ -23,7 +23,8 @@ All notable changes to Stevedore are documented here. The format is based on
   signaled, so it doubles as the keepalive process) plus a GET-only web server on
   `0.0.0.0`/`::` whose URL space mirrors the command set — `/env`, `/id`, `/hostname`,
   `/uname`, `/ifaces`, `/mounts`, `/cat/PATH`, `/ls/PATH`, `/find/PATH` (rootfs probes),
-  `/ping/HOST` (ICMP, IPv4/IPv6, DNS names via a built-in stub resolver), `/resolve/NAME` — so tests can inspect
+  `/ping/HOST` (ICMP, IPv4/IPv6, DNS names via a built-in stub resolver), `/ping6/HOST`
+  (forced IPv6, AAAA only — proves the v6 path to a dual-stack host), `/resolve/NAME` — so tests can inspect
   the container's view of its world from outside. `exit` is REPL-only; remote peers cannot
   kill the container. A second instance in the same netns finds the port taken and degrades
   gracefully to REPL-only, so tests can exec another copy inside a running container.

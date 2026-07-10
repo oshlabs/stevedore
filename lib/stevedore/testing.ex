@@ -117,7 +117,7 @@ defmodule Stevedore.Testing do
   the keepalive process) plus a GET-only web server on 0.0.0.0/:: (default
   port 8080) whose URL space mirrors the command set — `/env`, `/id`,
   `/hostname`, `/uname`, `/ifaces`, `/mounts`, `/cat/PATH`, `/ls/PATH`,
-  `/find/PATH`, `/ping/H`,
+  `/find/PATH`, `/ping/H`, `/ping6/H`,
   `/resolve/N` — so tests can inspect the container's view of its world from
   outside. See `priv/deckhand/README.md`.
 

@@ -23,6 +23,9 @@
 //!     ls PATH   GET /ls/PATH     directory entries, "/"-suffixed for dirs
 //!     find PATH GET /find/PATH   recursive path listing (no symlink follow)
 //!     ping H    GET /ping/H      one ICMP echo, IPv4/IPv6 literal or DNS name
+//!                                (names prefer A, falling back to AAAA)
+//!     ping6 H   GET /ping6/H     one ICMPv6 echo, forced IPv6 (AAAA only) —
+//!                                proves the v6 path to a dual-stack host
 //!     resolve N GET /resolve/N   A + AAAA via a stub resolver (/etc/resolv.conf)
 //!     exit      (REPL only — remote peers must not be able to kill the container)
 //!
@@ -333,6 +336,8 @@ fn runCommand(cmd: []const u8, arg: []const u8) bool {
         cmdFind(arg);
     } else if (eq(cmd, "ping")) {
         cmdPing(arg);
+    } else if (eq(cmd, "ping6")) {
+        cmdPing6(arg);
     } else if (eq(cmd, "resolve")) {
         cmdResolve(arg);
     } else {
@@ -355,6 +360,7 @@ fn cmdHelp() void {
         \\  ls PATH   /ls/PATH     directory entries ("/" marks dirs)
         \\  find PATH /find/PATH   recursive path listing
         \\  ping H    /ping/H      one ICMP echo (IPv4/IPv6 literal or name)
+        \\  ping6 H   /ping6/H     one ICMPv6 echo, forced IPv6 (AAAA only)
         \\  resolve N /resolve/N   A + AAAA via /etc/resolv.conf
         \\  exit                   REPL only
         \\
@@ -1083,6 +1089,26 @@ fn cmdPing(host: []const u8) void {
         return ping6(out6[0]);
     }
     emit("ping: cannot resolve ");
+    emit(host);
+    emit("\n");
+}
+
+// Forced IPv6: proves the v6 path to a dual-stack host, which plain `ping`
+// can't (it prefers A for names and would silently succeed over v4).
+fn cmdPing6(host: []const u8) void {
+    if (host.len == 0) return emit("ping6: usage: ping6 HOST\n");
+    if (parseIp6(host)) |a6| return ping6(a6);
+    if (parseIp4(host) != null) return emit("ping6: not an IPv6 destination\n");
+    var out6: [4][16]u8 = undefined;
+    if (dnsQuery(host, QTYPE_AAAA, null, &out6) > 0) {
+        emit("resolved ");
+        emit(host);
+        emit(" to ");
+        emitIp6(out6[0]);
+        emit("\n");
+        return ping6(out6[0]);
+    }
+    emit("ping6: no AAAA record for ");
     emit(host);
     emit("\n");
 }
