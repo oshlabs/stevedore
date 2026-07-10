@@ -15,10 +15,10 @@ defmodule Stevedore.Copy do
   and the distribution-spec push workflow.
   """
 
-  alias Stevedore.{Digest, Image, Manifest, Transport}
+  alias Stevedore.{Digest, Image, Index, Manifest, Transport}
   alias Stevedore.Transport.Parse
 
-  @type endpoint :: String.t() | Image.t() | {Transport.t(), Transport.ref()}
+  @type endpoint :: String.t() | Image.t() | Index.t() | {Transport.t(), Transport.ref()}
 
   @doc """
   Copies the image at `source` to `dest`. Returns the destination manifest digest.
@@ -41,6 +41,9 @@ defmodule Stevedore.Copy do
 
   defp endpoint(%Image{} = image, _opts),
     do: {:ok, {Transport.Memory.from_image(image), image.tag}}
+
+  defp endpoint(%Index{} = index, _opts),
+    do: {:ok, {Transport.Memory.from_index(index), index.tag}}
 
   defp endpoint({%_{}, _ref} = pair, _opts), do: {:ok, pair}
 

@@ -64,7 +64,10 @@ defmodule Stevedore.MixProject do
         "GitHub" => @source_url,
         "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"
       },
-      files: ~w(lib mix.exs README.md LICENSE CHANGELOG.md AGENTS.md docs .formatter.exs)
+      # priv/deckhand ships the runnable-image binaries (~39 KB total); nothing
+      # loads them unless Stevedore.Testing.runnable_image/1 is called.
+      files:
+        ~w(lib priv/deckhand mix.exs README.md LICENSE CHANGELOG.md AGENTS.md docs .formatter.exs)
     ]
   end
 
@@ -94,6 +97,7 @@ defmodule Stevedore.MixProject do
           Stevedore.Manifest,
           Stevedore.Config,
           Stevedore.Image,
+          Stevedore.Index,
           Stevedore.Layer
         ],
         "Build, copy & modify": [

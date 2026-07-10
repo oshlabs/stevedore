@@ -90,6 +90,27 @@ The four layers, fastest first:
 
 4. **`:interop`.** The asymmetric produce/consume matrix above, against the external oracle tools.
 
+## Test support for dependents: `Stevedore.Testing`
+
+`Stevedore.Testing` (in `lib/`, following the `Plug.Test` idiom, so dependents can use it too)
+provides the hermetic building blocks the suites above compose: `start_registry!/1` (a real
+`/v2` registry on a free localhost port, linked to the test), `synthetic_image/1` (deterministic
+in-memory contents that exercise tricky tar shapes), and `runnable_image/1` — a synthetic image
+carrying **deckhand** (`priv/deckhand/`, ~19 KB, statically linked, no libc), so a dependent's
+runtime tests can actually spawn a process from a pulled image. deckhand is a container
+diagnostic: an event-printing REPL (PTY resizes, signals, HTTP hits; it runs until signaled, so
+it is also the keepalive process) plus a GET-only web server on `0.0.0.0`/`::` whose URL space
+mirrors the command set (`/env`, `/id`, `/ifaces`, `/mounts`, `/cat/PATH`, `/ls/PATH`, `/find/PATH`, `/ping/H`,
+`/resolve/N`, …), so a test can inspect the container's view of its environment, filesystem,
+network, and DNS from outside.
+
+`runnable_image(platforms: :all)` returns both arches under a real OCI index for
+index → platform-manifest resolution tests.
+
+The binaries are checked in but **verifiable, not trusted**: `priv/deckhand/build.sh` rebuilds
+them from source with a pinned Zig, builds are byte-reproducible, and the CI `deckhand` job
+fails any PR whose blobs don't match a rebuild from source.
+
 ## Tooling
 
 The interop and conformance slices drive real binaries. **Exact versions are pinned in CI**

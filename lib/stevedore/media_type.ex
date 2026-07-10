@@ -57,6 +57,10 @@ defmodule Stevedore.MediaType do
   @spec docker_manifest() :: String.t()
   def docker_manifest, do: @docker_manifest
 
+  @doc "The Docker schema-2 manifest list (multi-arch index) media type."
+  @spec docker_manifest_list() :: String.t()
+  def docker_manifest_list, do: @docker_manifest_list
+
   @doc "The Docker image config media type."
   @spec docker_config() :: String.t()
   def docker_config, do: @docker_config

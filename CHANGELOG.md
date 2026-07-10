@@ -4,6 +4,32 @@ All notable changes to Stevedore are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`Stevedore.Testing`** — test-support helpers for this library's and dependents' suites: a
+  hermetic local registry (`start_registry!/1`), deterministic in-memory images
+  (`synthetic_image/1`), and `push!/3` — real push/pull mechanics with zero external network.
+- **`Stevedore.Build.index/2` / `Stevedore.Index`** — assemble a multi-arch OCI image index
+  (or Docker manifest list) from per-platform built images; the result is a `Stevedore.copy/3`
+  source like any image, so a built index can be pushed whole (`all: true`) or per platform.
+- **`Stevedore.Testing.runnable_image/1`** — a synthetic image whose contents actually *run*:
+  **`deckhand`**, a ~19 KB statically linked, libc-free container-diagnostics binary (built
+  from `priv/deckhand/` with a pinned Zig; builds are byte-reproducible and CI rebuilds and
+  byte-diffs the checked-in blobs) layered at `/bin/deckhand` — so dependents'
+  runtime/exec/reconciler tests need no distro images. It is an event-printing REPL (console
+  resizes via SIGWINCH, signal delivery, HTTP hits, graceful TERM/INT exit — it runs until
+  signaled, so it doubles as the keepalive process) plus a GET-only web server on
+  `0.0.0.0`/`::` whose URL space mirrors the command set — `/env`, `/id`, `/hostname`,
+  `/uname`, `/ifaces`, `/mounts`, `/cat/PATH`, `/ls/PATH`, `/find/PATH` (rootfs probes),
+  `/ping/HOST` (ICMP, IPv4/IPv6, DNS names via a built-in stub resolver), `/resolve/NAME` — so tests can inspect
+  the container's view of its world from outside. `exit` is REPL-only; remote peers cannot
+  kill the container. A second instance in the same netns finds the port taken and degrades
+  gracefully to REPL-only, so tests can exec another copy inside a running container.
+  `platforms: :all` returns both linux/amd64 and linux/arm64 under a real OCI index for
+  hermetic index-resolution tests.
+
 ## [0.2.0] - 2026-06-06
 
 ### Added

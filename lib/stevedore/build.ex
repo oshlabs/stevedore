@@ -16,7 +16,7 @@ defmodule Stevedore.Build do
   and [layer](https://github.com/opencontainers/image-spec/blob/main/layer.md); crane semantics.
   """
 
-  alias Stevedore.{Archive, Config, Descriptor, Digest, Image, MediaType}
+  alias Stevedore.{Archive, Config, Descriptor, Digest, Image, Index, MediaType}
 
   @typedoc """
   A layer source: an uncompressed tar binary, a list of `t:Stevedore.Archive.entry/0`, or a
@@ -44,6 +44,28 @@ defmodule Stevedore.Build do
     with {:ok, layers} <- build_layers(layer_inputs, opts) do
       Image.assemble(base_config(config, opts), layers, assemble_opts(opts))
     end
+  end
+
+  @doc """
+  Assembles a multi-arch index from images built per platform.
+
+  Each image's index entry takes its `platform` from the image config's
+  `os`/`architecture` (set via `Build.image/3`'s `:platform` option), so every
+  input must carry one. Options: `:format` (`:oci`/`:docker`), `:annotations`,
+  `:tag`. The result is a `Stevedore.copy/3` source like any built image.
+
+  ## Examples
+
+      iex> tar = Stevedore.Archive.write!([%{name: "f", type: :regular, mode: 0o644, size: 2, linkname: nil, content: "hi"}])
+      iex> {:ok, amd} = Stevedore.Build.image([tar], %{cmd: ["/f"]}, platform: "linux/amd64")
+      iex> {:ok, arm} = Stevedore.Build.image([tar], %{cmd: ["/f"]}, platform: "linux/arm64")
+      iex> {:ok, index} = Stevedore.Build.index([amd, arm])
+      iex> length(index.images)
+      2
+  """
+  @spec index([Image.t(), ...], keyword()) :: {:ok, Index.t()} | {:error, term()}
+  def index(images, opts \\ []) when is_list(images) do
+    Index.assemble(images, opts)
   end
 
   @doc """

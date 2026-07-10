@@ -23,8 +23,33 @@ env:
   # --registry-referrers-mode). Pin the planned 3.0.6 — the installer's default cosign is a 2.x
   # that predates those flags. Needs cosign-installer >= v4 to fetch/verify 3.x releases.
   COSIGN_VERSION: "v3.0.6"
+  # Pin for rebuilding priv/deckhand (see priv/deckhand/README.md). The sha256
+  # is for the x86_64-linux release tarball, from https://ziglang.org/download/.
+  ZIG_VERSION: "0.16.0"
+  ZIG_SHA256: "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # deckhand — the checked-in priv/deckhand binaries are verifiable, not
+  # trusted: rebuild them from source with the pinned Zig and fail on any byte
+  # diff, so a PR cannot change the blobs without matching source.
+  # ---------------------------------------------------------------------------
+  deckhand:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned Zig
+        run: |
+          curl -sLO "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          echo "${ZIG_SHA256}  zig-x86_64-linux-${ZIG_VERSION}.tar.xz" | sha256sum -c
+          tar -xJf "zig-x86_64-linux-${ZIG_VERSION}.tar.xz" -C "$HOME"
+          echo "$HOME/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+
+      - name: Rebuild and byte-diff
+        run: |
+          priv/deckhand/build.sh
+          git diff --exit-code priv/
   # ---------------------------------------------------------------------------
   # fast — the hermetic, offline PR gate. Format, warnings-as-errors, the
   # default `mix test` (9A/9B fold in here), and dialyzer. Required check.

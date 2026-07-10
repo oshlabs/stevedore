@@ -222,6 +222,13 @@ entries = [
 # Append a layer (adds one history entry), then publish the built image straight to a registry:
 {:ok, image} = Stevedore.Build.append(image, Stevedore.Archive.write!(patch_entries))
 {:ok, %{digest: _}} = Stevedore.copy(image, "docker://ghcr.io/me/app:1.0")
+
+# Multi-arch: build once per platform, assemble a real OCI index, push it whole.
+# Each child's index entry takes its platform from the image config:
+{:ok, amd} = Stevedore.Build.image([tar_amd], config, platform: "linux/amd64")
+{:ok, arm} = Stevedore.Build.image([tar_arm], config, platform: "linux/arm64")
+{:ok, index} = Stevedore.Build.index([amd, arm])
+{:ok, %{digest: _}} = Stevedore.copy(index, "docker://ghcr.io/me/app:1.0", all: true)
 ```
 
 ---
