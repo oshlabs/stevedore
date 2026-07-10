@@ -131,8 +131,7 @@ defmodule Stevedore.TestingTest do
     true = Port.command(port, "hostname\n")
     {:ok, nodename} = :inet.gethostname()
     expected = to_string(nodename)
-    assert_receive {^port, {:data, data}}, 2_000
-    assert data =~ expected
+    assert receive_until(port, expected)
 
     # ...and the HTTP frontend mirrors the same command, plus 404 with help.
     assert {:ok, 200, body} = http_get(http_port, "/hostname")
@@ -152,8 +151,18 @@ defmodule Stevedore.TestingTest do
     assert found =~ probe
 
     # Every request also surfaced as a console event.
-    assert_receive {^port, {:data, event}}, 2_000
-    assert event =~ "event: GET /hostname from"
+    assert receive_until(port, "event: GET /hostname from")
+  end
+
+  # Port data arrives in arbitrary chunks; accumulate until `needle` shows up.
+  defp receive_until(port, needle, acc \\ "") do
+    receive do
+      {^port, {:data, data}} ->
+        acc = acc <> data
+        if acc =~ needle, do: true, else: receive_until(port, needle, acc)
+    after
+      2_000 -> flunk("expected #{inspect(needle)} in output, got: #{inspect(acc)}")
+    end
   end
 
   defp free_test_port do
@@ -205,13 +214,11 @@ defmodule Stevedore.TestingTest do
       System.cmd("kill", ["-KILL", to_string(second_pid)], stderr_to_stdout: true)
     end)
 
-    assert_receive {^second, {:data, banner}}, 2_000
-    assert banner =~ "REPL-only, webserver disabled"
+    assert receive_until(second, "REPL-only, webserver disabled")
 
     # The second instance's REPL still answers; the first still serves HTTP.
     true = Port.command(second, "id\n")
-    assert_receive {^second, {:data, data}}, 2_000
-    assert data =~ "uid="
+    assert receive_until(second, "uid=")
     assert {:ok, 200, _} = http_get(http_port, "/id")
   end
 

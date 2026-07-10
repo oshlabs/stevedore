@@ -248,6 +248,14 @@ fn handleStdin() void {
     }
 }
 
+// Events are composed in the (idle) sink and hit stdout as ONE write, so a
+// consumer reading the console never sees a torn "event: " prefix interleaved
+// with other output.
+fn flushEvent() void {
+    w(sinkBody());
+    sinkReset();
+}
+
 fn handleSignal(sigfd: i32) void {
     var info: linux.signalfd_siginfo = undefined;
     const rc = linux.read(sigfd, @ptrCast(&info), @sizeOf(linux.signalfd_siginfo));
@@ -255,9 +263,11 @@ fn handleSignal(sigfd: i32) void {
     switch (info.signo) {
         @intFromEnum(linux.SIG.WINCH) => reportWinsize(false),
         @intFromEnum(linux.SIG.TERM), @intFromEnum(linux.SIG.INT) => {
-            w("event: signal ");
-            w(if (info.signo == @intFromEnum(linux.SIG.TERM)) "TERM" else "INT");
-            w(", leaving the ship\n");
+            sinkReset();
+            emit("event: signal ");
+            emit(if (info.signo == @intFromEnum(linux.SIG.TERM)) "TERM" else "INT");
+            emit(", leaving the ship\n");
+            flushEvent();
             linux.exit_group(0);
         },
         @intFromEnum(linux.SIG.HUP) => w("event: signal HUP\n"),
@@ -274,11 +284,13 @@ fn reportWinsize(initial: bool) void {
     var rc = linux.ioctl(1, linux.T.IOCGWINSZ, @intFromPtr(&ws));
     if (!ok(rc)) rc = linux.ioctl(0, linux.T.IOCGWINSZ, @intFromPtr(&ws));
     if (!ok(rc)) return; // no tty, nothing to report
-    w(if (initial) "console is " else "event: resize ");
-    wNum(ws.col);
-    w("x");
-    wNum(ws.row);
-    w("\n");
+    sinkReset();
+    emit(if (initial) "console is " else "event: resize ");
+    emitNum(ws.col);
+    emit("x");
+    emitNum(ws.row);
+    emit("\n");
+    flushEvent();
 }
 
 fn trim(s0: []const u8) []const u8 {
@@ -830,13 +842,15 @@ fn handleHttp(listen_fd: i32) void {
     const method = parts.next() orelse return;
     const raw_path = parts.next() orelse "/";
 
-    w("event: ");
-    w(method);
-    w(" ");
-    w(raw_path);
-    w(" from ");
-    writePeer(&ss);
-    w("\n");
+    sinkReset();
+    emit("event: ");
+    emit(method);
+    emit(" ");
+    emit(raw_path);
+    emit(" from ");
+    emitPeer(&ss);
+    emit("\n");
+    flushEvent();
     prompt();
 
     if (!eq(method, "GET")) {
@@ -883,10 +897,7 @@ fn respond(fd: i32, status: []const u8, body: []const u8) void {
     wfd(fd, body);
 }
 
-// Commands only run synchronously after this event line is printed, so the
-// sink is idle here — borrow it to format the address, print, reset.
-fn writePeer(ss: *const linux.sockaddr.storage) void {
-    sinkReset();
+fn emitPeer(ss: *const linux.sockaddr.storage) void {
     switch (ss.family) {
         linux.AF.INET => {
             const a: *const linux.sockaddr.in = @ptrCast(@alignCast(ss));
@@ -903,8 +914,6 @@ fn writePeer(ss: *const linux.sockaddr.storage) void {
         },
         else => emit("?"),
     }
-    w(sinkBody());
-    sinkReset();
 }
 
 // ---------------------------------------------------------------------------
