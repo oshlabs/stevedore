@@ -163,8 +163,26 @@ defmodule Stevedore.Testing do
     marker = "etc/stevedore-test"
 
     with {:ok, binary} <- File.read(deckhand_path(oci_arch)) do
+      # The runtime skeleton every real image ships: mount points for
+      # /proc,/dev,/sys (+ /tmp,/run), and the /etc files runtimes bind-mount
+      # over (resolv.conf, hosts, hostname). Without these, a runtime that
+      # mounts onto existing paths — as Tank's does — fails with ENOENT.
+      skeleton_dirs =
+        Enum.map(
+          ~w(proc dev sys tmp run),
+          &%{name: &1, type: :directory, mode: 0o755, size: 0, linkname: nil, content: nil}
+        )
+
+      skeleton_files =
+        Enum.map(
+          ~w(etc/resolv.conf etc/hosts etc/hostname),
+          &%{name: &1, type: :regular, mode: 0o644, size: 0, linkname: nil, content: ""}
+        )
+
       entries =
         dir_entries([marker, bin_path]) ++
+          skeleton_dirs ++
+          skeleton_files ++
           [
             %{
               name: bin_path,
